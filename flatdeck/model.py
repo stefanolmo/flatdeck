@@ -1,0 +1,142 @@
+"""Project model (no Qt): loaded layers, generated jobs, board-wide transforms and the G-code origin."""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from . import cam, geom
+from .excellon import DrillFile, parse_excellon
+from .gerber import GerberLayer, outline_loops, parse_gerber
+
+GERBER_EXT = {".gbr", ".ger", ".gtl", ".gbl", ".gts", ".gbs", ".gto", ".gbo", ".gko", ".gm1", ".gml", ".gtp", ".gbp", ".cmp", ".sol"}
+DRILL_EXT = {".drl", ".xln", ".exc", ".drd", ".txt"}
+
+
+@dataclass
+class Layer:
+    name: str
+    kind: str                       # copper | outline | drill | job
+    gerber: GerberLayer | None = None
+    drill: DrillFile | None = None
+    job: cam.CamResult | None = None
+    visible: bool = True
+    path: str = ""
+
+    def bounds(self):
+        if self.gerber is not None:
+            return self.gerber.bounds()
+        if self.drill is not None:
+            return self.drill.bounds()
+        return None
+
+    @property
+    def warnings(self) -> list:
+        src = self.gerber or self.drill or self.job
+        return list(src.warnings) if src is not None else []
+
+
+def sniff_kind(path: str, text: str) -> str:
+    """'gerber' or 'drill' from the content (the extension is unreliable)."""
+    head = text[:4000]
+    if "%FS" in head or "%MO" in head or "G04" in head and "%ADD" in text[:20000]:
+        return "gerber"
+    if "M48" in head or "T01" in head or "INCH" in head or "METRIC" in head:
+        return "drill"
+    return "gerber" if os.path.splitext(path)[1].lower() in GERBER_EXT else "drill"
+
+
+class Project:
+    def __init__(self):
+        self.layers: list[Layer] = []
+        self.origin_mode = "board"          # board: lower-left corner of everything loaded | file: coordinates as in the files
+
+    # ----- loading
+    def load(self, path: str, kind: str | None = None) -> Layer:
+        with open(path, "r", errors="replace") as f:
+            text = f.read()
+        name = os.path.basename(path)
+        k = kind or sniff_kind(path, text)
+        if k == "drill":
+            df = parse_excellon(text, name)
+            lay = Layer(name, "drill", drill=df, path=path)
+        else:
+            gl = parse_gerber(text, name)
+            ext = os.path.splitext(path)[1].lower()
+            guess = "outline" if ext in (".gko", ".gm1", ".gml") or "edge" in name.lower() or "outline" in name.lower() else "copper"
+            lay = Layer(name, guess, gerber=gl, path=path)
+        self.layers.append(lay)
+        return lay
+
+    def remove(self, layer: Layer) -> None:
+        self.layers.remove(layer)
+
+    def data_layers(self) -> list:
+        return [l for l in self.layers if l.kind != "job"]
+
+    def jobs(self) -> list:
+        return [l for l in self.layers if l.kind == "job"]
+
+    def add_job(self, res: cam.CamResult) -> Layer:
+        lay = Layer(res.name, "job", job=res)
+        self.layers.append(lay)
+        return lay
+
+    # ----- geometry
+    def bounds(self):
+        bs = [b for b in (l.bounds() for l in self.data_layers() if l.kind != "outline") if b]
+        bs = bs or [b for b in (l.bounds() for l in self.data_layers()) if b]
+        if not bs:
+            return None
+        a = np.array(bs)
+        return (float(a[:, 0].min()), float(a[:, 1].min()), float(a[:, 2].max()), float(a[:, 3].max()))
+
+    def origin(self):
+        b = self.bounds()
+        if self.origin_mode == "file" or b is None:
+            return (0.0, 0.0)
+        return (b[0], b[1])
+
+    def board_outline(self, margin: float = 1.0):
+        """(outer_loop, inner_loops, note). Uses the outline layer if there is one, else the copper bounding box + margin."""
+        for l in self.data_layers():
+            if l.kind == "outline" and l.gerber is not None:
+                closed, opened = outline_loops(l.gerber.strokes)
+                if closed:
+                    closed.sort(key=lambda a: -abs(geom.area(a)))
+                    note = f"{len(opened)} tratti aperti ignorati" if opened else ""
+                    return closed[0], closed[1:], note
+        b = self.bounds()
+        if b is None:
+            raise ValueError("Nessun file caricato")
+        return cam.rect_outline(b, margin), [], "Nessun livello contorno: uso il rettangolo dei dati + margine"
+
+    def copper_paths(self, layer: Layer):
+        return layer.gerber.polys
+
+    # ----- transforms (all data layers together, so they stay registered)
+    def _centre(self):
+        b = self.bounds()
+        return ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) if b else (0.0, 0.0)
+
+    def transform(self, op: str) -> None:
+        cx, cy = self._centre()
+        fns = {
+            "mirror_x": lambda a: np.column_stack([2 * cx - a[:, 0], a[:, 1]]),
+            "mirror_y": lambda a: np.column_stack([a[:, 0], 2 * cy - a[:, 1]]),
+            "rot90": lambda a: np.column_stack([cx - (a[:, 1] - cy), cy + (a[:, 0] - cx)]),
+            "rot270": lambda a: np.column_stack([cx + (a[:, 1] - cy), cy - (a[:, 0] - cx)]),
+        }
+        fn = fns[op]
+        flips = op.startswith("mirror")
+        for l in self.data_layers():
+            if l.gerber is not None:
+                g = l.gerber
+                g.polys = geom.union([fn(p) for p in g.polys]) if flips else [fn(p) for p in g.polys]
+                g.strokes = [(w, fn(s)) for w, s in g.strokes]
+            if l.drill is not None:
+                for t in l.drill.tools.values():
+                    t.holes = fn(t.holes) if len(t.holes) else t.holes
+                    t.slots = [fn(s) for s in t.slots]
+        self.layers = [l for l in self.layers if l.kind != "job"]   # generated G-code is now out of date

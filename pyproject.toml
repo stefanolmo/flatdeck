@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flatdeck"
+version = "0.1.0"
+description = "Da Gerber ed Excellon a G-code GRBL per fresare circuiti stampati (alternativa a FlatCAM)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["PySide6-Essentials>=6.5", "numpy>=1.24", "pyclipper>=1.3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+flatdeck = "flatdeck.__main__:main"
+
+[tool.setuptools]
+packages = ["flatdeck"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

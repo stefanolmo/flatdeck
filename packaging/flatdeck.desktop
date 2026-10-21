@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=FlatDeck
+GenericName=Gerber → G-code per PCB
+Comment=Da Gerber ed Excellon a G-code GRBL per fresare circuiti stampati
+Exec=@EXEC@ %F
+Icon=@ICON@
+Terminal=false
+Categories=Development;Engineering;Electronics;
+StartupWMClass=flatdeck

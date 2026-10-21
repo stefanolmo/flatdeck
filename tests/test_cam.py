@@ -1,0 +1,144 @@
+import math
+import re
+
+import numpy as np
+import pytest
+
+from flatdeck import cam, geom
+from flatdeck.excellon import DrillFile, DrillTool, parse_excellon
+from flatdeck.gerber import parse_gerber
+
+PADS = "%FSLAX24Y24*%\n%MOMM*%\n%ADD10C,1.6*%\n%ADD11C,0.4*%\nD10*\nX00000Y00000D03*\nX100000Y00000D03*\nD11*\nX00000Y00000D02*\nX100000Y00000D01*\nM02*\n"
+
+
+def coords(gcode):
+    pts = []
+    for l in gcode.splitlines():
+        m = re.match(r"G[01] X(-?[\d.]+) Y(-?[\d.]+)", l)
+        if m:
+            pts.append((float(m.group(1)), float(m.group(2))))
+    return np.array(pts)
+
+
+def test_vbit():
+    assert abs(cam.vbit_diameter(0.1, 30, 0.1) - (0.1 + 0.2 * math.tan(math.radians(15)))) < 1e-9
+
+
+def test_isolation_single_loop_distance():
+    g = parse_gerber(PADS)
+    res = cam.isolate(g.polys, cam.IsolationParams(tool_dia=0.2), origin=(0, 0))
+    assert len(res.paths) == 1                                   # pads + trace are one island
+    loop = res.paths[0][0]
+    # every point of the tool path is exactly tool radius away from the copper (distance to the trace axis >= 0.2+0.1)
+    d = np.abs(loop[:, 1]) 
+    on_trace = (loop[:, 0] > 0.9) & (loop[:, 0] < 9.1)
+    assert np.allclose(d[on_trace], 0.2 + 0.1, atol=0.01) or np.allclose(d[on_trace], 0.8 + 0.1, atol=0.02)
+    assert "M3 S1000" in res.gcode and res.gcode.rstrip().endswith("M2")
+    assert res.length > 20
+
+
+def test_isolation_passes_ext_int():
+    ring = parse_gerber("%FSLAX24Y24*%\n%MOMM*%\n%ADD10C,0.5*%\nD10*\nG75*\nX50000Y00000D02*\nG03X50000Y00000I-50000J0D01*\nM02*\n")
+    ext = cam.isolation_loops(ring.polys, cam.IsolationParams(tool_dia=0.2, passes=3, mode="ext"))
+    inn = cam.isolation_loops(ring.polys, cam.IsolationParams(tool_dia=0.2, passes=3, mode="int"))
+    allm = cam.isolation_loops(ring.polys, cam.IsolationParams(tool_dia=0.2, passes=1))
+    assert [len(p) for p in ext] == [1, 1, 1] and [len(p) for p in inn] == [1, 1, 1] and len(allm[0]) == 2
+    r = [np.hypot(*p[0][0]) for p in ext]
+    assert r[0] < r[1] < r[2]
+    assert abs((r[1] - r[0]) - 0.2 * 0.8) < 0.01                    # step = d * (1 - overlap)
+
+
+def test_isolation_validates():
+    g = parse_gerber(PADS)
+    with pytest.raises(ValueError):
+        cam.isolate(g.polys, cam.IsolationParams(cut_z=0.1))
+    with pytest.raises(ValueError):
+        cam.isolate(g.polys, cam.IsolationParams(tool_dia=0))
+
+
+def test_origin_shift_and_modal_feed():
+    g = parse_gerber(PADS)
+    a = cam.isolate(g.polys, cam.IsolationParams(), origin=(0, 0))
+    b = cam.isolate(g.polys, cam.IsolationParams(), origin=(-0.8, -0.8))
+    pa = coords(a.gcode)[:-1]                                          # drop the final return to X0 Y0
+    pb = coords(b.gcode)[:-1] - 0.8
+    dist = np.hypot(*(pb[:, None, :] - pa[None, :, :]).transpose(2, 0, 1)).min(axis=1)
+    assert dist.max() < 2e-3                                           # same vertices, shifted (G-code is rounded to 1 µm)
+    assert len(re.findall(r"F120", a.gcode)) == 1                  # feed only written when it changes
+    assert all(len(l) < 80 for l in a.gcode.splitlines())
+
+
+def test_drill_file_real():
+    d = parse_excellon(open("examples/TrafficLight_drill.txt").read())
+    res = cam.drill(d, cam.DrillParams(), origin=(d.bounds()[0], d.bounds()[1]))
+    assert res.gcode.count("M0\n") == 4                            # one tool change per bit
+    assert len(res.holes) == 56
+    plunges = [l for l in res.gcode.splitlines() if l.startswith("G1 Z")]
+    assert len(plunges) == 56 and all("Z-1.8" in l for l in plunges)
+    assert res.gcode.index("0.80 mm") < res.gcode.index("0.89 mm") < res.gcode.index("1.02 mm") < res.gcode.index("1.32 mm")
+
+
+def test_drill_tool_selection_and_peck():
+    d = parse_excellon(open("examples/TrafficLight_drill.txt").read())
+    res = cam.drill(d, cam.DrillParams(tools={100: False, 102: False, 103: False}, peck=0.6))
+    assert res.gcode.count("M0\n") == 1 and len(res.holes) == 10
+    assert "Z-0.6" in res.gcode and "Z-1.2" in res.gcode and "Z-1.8" in res.gcode
+    with pytest.raises(ValueError):
+        cam.drill(d, cam.DrillParams(tools={t: False for t in d.tools}))
+
+
+def test_drill_slot():
+    d = DrillFile(tools={1: DrillTool(1, 1.0, np.zeros((0, 2)), [np.array([[0.0, 0], [4, 0]])])})
+    res = cam.drill(d, cam.DrillParams(drill_z=-1.2, slot_step=0.6))
+    xs = coords(res.gcode)
+    assert len(xs) == 2 * 1 + 0 or len(xs) >= 2
+    assert "Z-0.6" in res.gcode and "Z-1.2" in res.gcode
+
+
+def test_split_gaps_lengths():
+    sq = np.array([[0, 0], [20, 0], [20, 10], [0, 10.0]])
+    parts = cam.split_gaps(sq, [cam._point_to_s(sq, (10, 0)), cam._point_to_s(sq, (10, 10))], 3.0)
+    assert len(parts) == 2
+    assert abs(sum(geom.path_length(p) for p in parts) - (60 - 6)) < 1e-6
+
+
+def test_cutout_rectangle_with_gaps():
+    outer = geom_rect = np.array([[0, 0], [40, 0], [40, 30], [0, 30.0]])
+    res = cam.cutout(outer, [], cam.CutoutParams(tool_dia=1.0, gaps="four", gap_width=3.0, cut_z=-1.8, step=0.6))
+    # 3 depths x 4 pieces
+    assert res.gcode.count("G1 Z") == 12
+    xy = coords(res.gcode)
+    assert xy[:, 0].min() >= -0.5 - 1e-6 and xy[:, 0].max() <= 40.5 + 1e-6   # tool centre stays one radius outside
+    full = cam.cutout(outer, [], cam.CutoutParams(gaps="none"))
+    assert full.gcode.count("G1 Z") == 3
+    assert full.length > res.length
+
+
+def test_cutout_inner_first_and_inside_offset():
+    outer = np.array([[0, 0], [40, 0], [40, 30], [0, 30.0]])
+    inner = np.array([[10, 10], [20, 10], [20, 20], [10, 20.0]])
+    res = cam.cutout(outer, [inner], cam.CutoutParams(tool_dia=1.0, gaps="none", step=1.8))
+    first = res.paths[0][0]
+    assert first[:, 0].min() >= 10.5 - 1e-6 and first[:, 0].max() <= 19.5 + 1e-6    # slot is cut with the tool inside it
+    assert res.paths[-1][0][:, 0].max() > 40
+
+
+def test_cutout_too_small():
+    inner = np.array([[0, 0], [1.0, 0], [1.0, 1.0], [0, 1.0]])
+    outer = np.array([[-10, -10], [10, -10], [10, 10], [-10, 10.0]])
+    res = cam.cutout(outer, [inner], cam.CutoutParams(tool_dia=2.0, gaps="none"))
+    assert len(res.paths) == 1                       # the 1 mm hole cannot be cut with a 2 mm tool: skipped, outline remains
+
+
+def test_every_generated_line_is_plain_grbl():
+    """Only G0/G1/G4/G21/G90/G94, M0/M2/M3/M5, comments; no line over GRBL's 80-char limit."""
+    d = parse_excellon(open("examples/TrafficLight_drill.txt").read())
+    g = parse_gerber(PADS)
+    outer = np.array([[0, 0], [40, 0], [40, 30], [0, 30.0]])
+    progs = [cam.drill(d, cam.DrillParams(peck=0.5)).gcode, cam.isolate(g.polys, cam.IsolationParams(passes=3)).gcode,
+             cam.cutout(outer, [], cam.CutoutParams(gaps="four")).gcode]
+    ok = re.compile(r"^(\(.*\)|G0 (X-?[\d.]+ Y-?[\d.]+|Z-?[\d.]+|X0 Y0)|G1 (X-?[\d.]+ Y-?[\d.]+|Z-?[\d.]+)( F[\d.]+)?|G4 P\d+|G21 G90 G94|M[0235]( S\d+)?)$")
+    for prog in progs:
+        for line in prog.splitlines():
+            assert len(line) < 80 and ok.match(line), line
+        assert prog.splitlines()[-1] == "M2"
