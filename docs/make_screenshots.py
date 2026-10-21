@@ -29,12 +29,13 @@ s.grab().save(os.path.join(HERE, "splash.png"))
 w = MainWindow()
 w.resize(1400, 860)
 w.show()
-for name in ("demo_copper.gbr", "demo_outline.gbr", "TrafficLight_drill.txt"):
+for name in ("TrafficLight_copperTop.gtl", "TrafficLight_copperBottom.gbl", "TrafficLight_contour.gm1", "TrafficLight_drill.txt"):
     w.load_file(os.path.join(HERE, "..", "examples", name))
+w.iso_layer.setCurrentIndex(0)
 w.gen_isolation()
 w.gen_drill()
 w.gen_cutout()
-w.layer_list.setCurrentRow(3)            # isolation job
+w.layer_list.setCurrentRow(4)            # isolation job
 w.view.fit()
 app.processEvents()
 w.grab().save(os.path.join(HERE, "main.png"))

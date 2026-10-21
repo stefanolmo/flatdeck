@@ -13,7 +13,7 @@ Il G-code prodotto si carica poi in CNC Deck (o Candle, UGS…) per l'invio alla
 
 ```bash
 ./install.sh          # venv in ~/.local/share/flatdeck, launcher "flatdeck", voce nel menu
-flatdeck examples/demo_copper.gbr examples/demo_outline.gbr examples/TrafficLight_drill.txt
+flatdeck examples/TrafficLight_copperTop.gtl examples/TrafficLight_copperBottom.gbl examples/TrafficLight_contour.gm1 examples/TrafficLight_drill.txt
 ```
 
 Senza installare: `pip install -r requirements.txt && python3 -m flatdeck`.
@@ -21,10 +21,14 @@ Opzioni: `--no-splash` (o `FLATDECK_NO_SPLASH=1`) salta la schermata iniziale di
 
 ## Flusso di lavoro
 
-1. **Apri** i file (anche più insieme, o trascinali sulla finestra): rame, contorno, foratura. Il tipo si riconosce dal contenuto;
-   con il tasto destro su un livello puoi forzarlo a *Rame* o *Contorno*.
-2. Per il rame **inferiore** usa **Specchia X** (agisce su tutto il progetto, così i livelli restano allineati con i fori).
-3. Scegli l'**origine** (predefinita: angolo basso-sinistro dei dati). È il punto che dovrai azzerare sulla macchina (X0 Y0).
+1. **Apri** i file (anche più insieme, o trascinali sulla finestra): rame, contorno, foratura, serigrafia, maschera. Il tipo e la faccia
+   si riconoscono da estensione e contenuto (`.gtl/.gbl/.gm1/.gto/.gts…`); con il tasto destro su un livello puoi cambiarne il tipo.
+   Serigrafia e maschera si possono vedere ma non fresare.
+2. Scheda a **doppia faccia**: genera l'isolamento di ciascun livello di rame. Per quello inferiore la casella *Faccia inferiore: specchia
+   in X* si attiva da sola: la scheda va girata attorno al proprio asse verticale. Lo stesso vale per la foratura dal lato inferiore.
+   (*Specchia X/Y* e *Ruota* in barra, invece, trasformano l'intero progetto.)
+3. L'**origine** G-code è l'angolo basso-sinistro del **contorno della scheda** (o dei dati, se manca il contorno), uguale sulle due facce:
+   è il punto da azzerare sulla macchina (X0 Y0), prima e dopo averla girata.
 4. Nelle schede **Isolamento / Foratura / Contorno** imposta i parametri (vengono ricordati) e premi *Genera*: ogni lavoro compare
    nell'elenco dei livelli con anteprima del percorso (la fascia chiara è la larghezza dell'utensile) e il G-code in basso.
 5. **Salva G-code…** con il lavoro selezionato.
@@ -55,9 +59,10 @@ lavoro va fatto con la fresa alzata (o senza rame) e con la mano sull'emergenza.
 
 ## Esempi
 
-`examples/TrafficLight_drill.txt` è un file Excellon **reale** (56 fori, 4 punte, pollici 2.4). `demo_copper.gbr` e `demo_outline.gbr`
-sono **sintetici** (generati da `examples/make_demo.py` sulle posizioni dei fori): servono solo a provare l'isolamento e il contorno,
-non sono il rame vero di quella scheda.
+`examples/TrafficLight_*` è una scheda reale a doppia faccia esportata da **Fritzing** (68,35 × 53,11 mm, 56 fori, 4 punte, pollici):
+rame sopra e sotto, contorno (5400 micro-segmenti, contigui vengono fusi in un'unica polilinea), foratura, maschera e serigrafia.
+Un test verifica che tutti i 56 fori cadano su una piazzola di entrambi i livelli di rame.
+Non provato (per ora) con Gerber di KiCad, Eagle o EasyEDA.
 
 ## Struttura
 

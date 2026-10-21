@@ -16,7 +16,7 @@ from .viewer import BoardView
 from .widgets import Card, CodeView, dspin, ispin
 
 APP_NAME = "FlatDeck"
-KIND_LABEL = {"copper": "Rame", "outline": "Contorno", "drill": "Fori", "job": "G-code"}
+KIND_LABEL = {"copper": "Rame", "outline": "Contorno", "silk": "Serigrafia", "mask": "Maschera", "drill": "Fori", "job": "G-code"}
 
 
 def fmt_time(s: float) -> str:
@@ -196,6 +196,10 @@ class MainWindow(QMainWindow):
         self.iso_plunge = self._field("iso_plunge", dspin(1, 2000, 40, 0, " mm/min"))
         self.iso_spindle = self._field("iso_spindle", ispin(0, 30000, 1000))
         self.iso_spindle.setToolTip("Valore S del mandrino. 0 = non emettere M3/M5")
+        self.iso_mirror = QCheckBox("Faccia inferiore: specchia in X")
+        self.iso_mirror.setToolTip("Per il rame inferiore: la scheda viene girata attorno al suo asse verticale.\n"
+                                   "Azzera X0 Y0 nell'angolo basso-sinistro della scheda girata.")
+        self.iso_layer.currentIndexChanged.connect(self._iso_layer_changed)
         self._form(c, [("Livello rame", self.iso_layer), ("Utensile", self.iso_tool), ("Diametro", self.iso_dia),
                        ("Punta: diametro", self.iso_tip), ("Punta: angolo", self.iso_angle), ("Larghezza taglio", self.iso_eff),
                        ("Passate", self.iso_passes), ("Sovrapposizione", self.iso_overlap), ("Isola", self.iso_mode),
@@ -203,9 +207,14 @@ class MainWindow(QMainWindow):
                        ("Tuffo", self.iso_plunge), ("Mandrino S", self.iso_spindle)])
         for w in (self.iso_tool, self.iso_dia, self.iso_tip, self.iso_angle, self.iso_depth):
             (w.currentIndexChanged if isinstance(w, QComboBox) else w.valueChanged).connect(lambda *_: self._iso_tool_changed())
+        c.body.addWidget(self.iso_mirror)
         c.body.addWidget(self._gen_button("Genera isolamento", self.gen_isolation))
         self._iso_tool_changed()
         return c
+
+    def _iso_layer_changed(self) -> None:
+        lay = self.iso_layer.currentData()
+        self.iso_mirror.setChecked(lay is not None and lay.side == "bottom")
 
     def _iso_tool_changed(self) -> None:
         vbit = self.iso_tool.currentData() == "vbit"
@@ -235,10 +244,12 @@ class MainWindow(QMainWindow):
         self.dr_peck = self._field("dr_peck", dspin(0, 10, 0, 2, " mm", 0.1))
         self.dr_peck.setToolTip("0 = foro con un'unica discesa; altrimenti scende a passi di questa profondità")
         self.dr_spindle = self._field("dr_spindle", ispin(0, 30000, 1000))
+        self.dr_mirror = QCheckBox("Foratura dal lato inferiore: specchia in X")
         c.body.addWidget(self.dr_file)
         c.body.addWidget(self.dr_table)
         self._form(c, [("Profondità", self.dr_depth), ("Z di sicurezza", self.dr_travel), ("Z cambio punta", self.dr_change),
                        ("Discesa", self.dr_plunge), ("Foratura a passi", self.dr_peck), ("Mandrino S", self.dr_spindle)])
+        c.body.addWidget(self.dr_mirror)
         n = QLabel("Ad ogni cambio punta il programma si ferma (M0): monta la punta e azzera di nuovo Z sulla superficie.")
         n.setObjectName("muted")
         n.setWordWrap(True)
@@ -373,7 +384,8 @@ class MainWindow(QMainWindow):
         else:
             ox, oy = self.project.origin()
             holes = sum(l.drill.hole_count() for l in self.project.layers if l.drill)
-            self.info.setText(f"Dimensioni dati: {b[2] - b[0]:.2f} × {b[3] - b[1]:.2f} mm · fori: {holes}\n"
+            bb = self.project.board_bounds()
+            self.info.setText(f"Scheda: {bb[2] - bb[0]:.2f} × {bb[3] - bb[1]:.2f} mm · fori: {holes}\n"
                               f"Origine nel file: X {ox:.3f}  Y {oy:.3f}")
         try:
             outer, inner, note = self.project.board_outline(self.co_margin.value())
@@ -405,10 +417,10 @@ class MainWindow(QMainWindow):
 
     def _layer_menu(self, pos) -> None:
         lay = self._current()
-        if lay is None or lay.kind not in ("copper", "outline"):
+        if lay is None or lay.kind not in ("copper", "outline", "silk", "mask"):
             return
         m = QMenu(self)
-        for kind in ("copper", "outline"):
+        for kind in ("copper", "outline", "silk", "mask"):
             a = m.addAction(f"Tratta come: {KIND_LABEL[kind]}")
             a.setEnabled(lay.kind != kind)
             a.triggered.connect(lambda _=False, k=kind: self._set_kind(lay, k))
@@ -466,8 +478,10 @@ class MainWindow(QMainWindow):
             return
         p = cam.IsolationParams(tool_dia=self._iso_eff, passes=self.iso_passes.value(), overlap=self.iso_overlap.value() / 100,
                                 mode=self.iso_mode.currentData(), cut_z=-self.iso_depth.value(), travel_z=self.iso_travel.value(),
-                                feed=self.iso_feed.value(), plunge=self.iso_plunge.value(), spindle=self.iso_spindle.value())
-        self._run("iso", lambda: cam.isolate(lay.gerber.polys, p, self.project.origin(), self._next_name(f"Isolamento {lay.name}")))
+                                feed=self.iso_feed.value(), plunge=self.iso_plunge.value(), spindle=self.iso_spindle.value(),
+                                mirror_x=self.project.mirror_axis() if self.iso_mirror.isChecked() else None)
+        name = self._next_name(f"Isolamento {lay.name}" + (" (specchiato)" if p.mirror_x is not None else ""))
+        self._run("iso", lambda: cam.isolate(lay.gerber.polys, p, self.project.origin(), name))
 
     def gen_drill(self) -> None:
         lay = self.dr_file.currentData()
@@ -477,8 +491,10 @@ class MainWindow(QMainWindow):
         tools = {self.dr_table.item(r, 0).data(Qt.UserRole): self.dr_table.item(r, 0).checkState() == Qt.Checked
                  for r in range(self.dr_table.rowCount())}
         p = cam.DrillParams(drill_z=-self.dr_depth.value(), travel_z=self.dr_travel.value(), change_z=self.dr_change.value(),
-                            plunge=self.dr_plunge.value(), peck=self.dr_peck.value(), spindle=self.dr_spindle.value(), tools=tools)
-        self._run("drill", lambda: cam.drill(lay.drill, p, self.project.origin(), self._next_name(f"Foratura {lay.name}")))
+                            plunge=self.dr_plunge.value(), peck=self.dr_peck.value(), spindle=self.dr_spindle.value(), tools=tools,
+                            mirror_x=self.project.mirror_axis() if self.dr_mirror.isChecked() else None)
+        name = self._next_name(f"Foratura {lay.name}" + (" (specchiato)" if p.mirror_x is not None else ""))
+        self._run("drill", lambda: cam.drill(lay.drill, p, self.project.origin(), name))
 
     def gen_cutout(self) -> None:
         def go():

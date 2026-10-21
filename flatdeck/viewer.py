@@ -50,7 +50,7 @@ class BoardView(QWidget):
         self.update()
 
     def fit(self) -> None:
-        b = self.project.bounds() if self.project else None
+        b = self.project.board_bounds() if self.project else None
         if b is None:
             return
         w, h = max(b[2] - b[0], 1e-3), max(b[3] - b[1], 1e-3)
@@ -97,6 +97,11 @@ class BoardView(QWidget):
                 path = self._cached(("cu", id(lay), id(lay.gerber.polys)), lambda l=lay: _poly_path(l.gerber.polys))
                 p.setPen(Qt.NoPen)
                 p.setBrush(col)
+                p.drawPath(path)
+            elif lay.kind in ("silk", "mask"):
+                path = self._cached(("sm", id(lay), id(lay.gerber.polys)), lambda l=lay: _poly_path(l.gerber.polys))
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(241, 245, 249, 150) if lay.kind == "silk" else QColor(52, 211, 153, 45))
                 p.drawPath(path)
             elif lay.kind == "outline":
                 path = self._cached(("ol", id(lay), id(lay.gerber.strokes)), lambda l=lay: _poly_path([s for _, s in l.gerber.strokes], False))

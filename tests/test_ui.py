@@ -30,21 +30,22 @@ def win(app, tmp_path):
 
 
 def load_all(w):
-    for f in ("demo_copper.gbr", "demo_outline.gbr", "TrafficLight_drill.txt"):
+    for f in ("TrafficLight_copperTop.gtl", "TrafficLight_copperBottom.gbl", "TrafficLight_contour.gm1", "TrafficLight_drill.txt"):
         w.load_file(os.path.join(EX, f))
 
 
 def test_load_and_generate_three_jobs(win):
     load_all(win)
     kinds = [l.kind for l in win.project.layers]
-    assert kinds == ["copper", "outline", "drill"]
+    assert kinds == ["copper", "copper", "outline", "drill"]
+    win.iso_layer.setCurrentIndex(0)
     win.gen_isolation()
     win.gen_drill()
     win.gen_cutout()
     jobs = win.project.jobs()
     assert [j.job.kind for j in jobs] == ["isolation", "drill", "cutout"]
-    assert win.layer_list.count() == 6
-    win.layer_list.setCurrentRow(5)
+    assert win.layer_list.count() == 7
+    win.layer_list.setCurrentRow(6)
     assert "G21 G90 G94" in win.code.toPlainText() and win.save_act.isEnabled()
     win.layer_list.setCurrentRow(0)
     assert not win.save_act.isEnabled() and win.code.toPlainText() == ""
@@ -93,9 +94,9 @@ def test_validation_error_shows_dialog_not_crash(win, monkeypatch):
 
 def test_layer_kind_override_and_origin_mode(win):
     load_all(win)
-    win.project.layers[1].kind = "copper"
+    win.project.layers[2].kind = "copper"
     win._refresh()
-    assert win.iso_layer.count() == 2
+    assert win.iso_layer.count() == 3
     win.origin_combo.setCurrentIndex(win.origin_combo.findData("file"))
     assert win.project.origin() == (0.0, 0.0)
 
@@ -119,3 +120,16 @@ def test_splash_renders_every_stage(app, tmp_path):
         img = s.grab().toImage()
         assert img.width() == 780 and img.height() == 440
     assert s.total > 100
+
+
+def test_bottom_layer_auto_checks_mirror_and_names_job(win):
+    load_all(win)
+    win.iso_layer.setCurrentIndex(0)
+    assert not win.iso_mirror.isChecked()
+    win.iso_layer.setCurrentIndex(1)                               # copperBottom
+    assert win.iso_mirror.isChecked()
+    win.gen_isolation()
+    assert "(specchiato)" in win.project.jobs()[-1].name
+    win.dr_mirror.setChecked(True)
+    win.gen_drill()
+    assert "(specchiato)" in win.project.jobs()[-1].name

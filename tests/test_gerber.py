@@ -103,3 +103,13 @@ def test_outline_loops_chain_and_open():
             (0.1, np.array([[10, 5], [0, 5.0]])), (0.1, np.array([[0, 5], [0, 0.0]]))]
     closed, opened = outline_loops(segs)
     assert len(closed) == 1 and not opened
+
+
+def test_contiguous_draws_merge_into_one_stroke():
+    lines = "".join(f"X{i * 10000:06d}Y00000D01*\n" for i in range(1, 200))
+    g = parse_gerber(HEAD + "%ADD10C,0.2*%\nD10*\nX00000Y00000D02*\n" + lines + "M02*\n")
+    assert len(g.strokes) == 1 and len(g.strokes[0][1]) == 200
+    assert abs(area(g) - (199 * 0.2 * 1.0 + math.pi * 0.01)) < 0.05
+    # a move (D02) or a new aperture breaks the polyline
+    g = parse_gerber(HEAD + "%ADD10C,0.2*%\nD10*\nX00000Y00000D02*\nX10000Y00000D01*\nX30000Y00000D02*\nX40000Y00000D01*\nM02*\n")
+    assert len(g.strokes) == 2

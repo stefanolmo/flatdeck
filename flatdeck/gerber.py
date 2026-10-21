@@ -125,6 +125,8 @@ class _Parser:
         self.sr_par = (1, 1, 0.0, 0.0)
         self.last_op = 2
         self.warned: set = set()
+        self.pend: list | None = None       # round-pen draw being accumulated, merged into one polyline
+        self.pend_ap: Aperture | None = None
 
     def warn(self, msg: str) -> None:
         if msg not in self.warned:
@@ -204,9 +206,13 @@ class _Parser:
             self.warn("Tracciato senza apertura selezionata")
             return
         if ap.kind == "C":
-            self.emit(geom.stroke(pts, ap.dia))
-            self.layer.strokes.append((ap.dia, pts))
+            if self.pend is not None and ap is self.pend_ap and np.allclose(self.pend[-1], pts[0], atol=1e-9):
+                self.pend.extend(pts[1:].tolist())
+            else:
+                self.flush_stroke()
+                self.pend, self.pend_ap = pts.tolist(), ap
             return
+        self.flush_stroke()
         # non-round pens: sweep of the (convex) shape along each segment
         base = np.vstack(ap.shape) if ap.shape else np.zeros((1, 2))
         polys = []
@@ -214,6 +220,14 @@ class _Parser:
             polys.append(geom.hull(np.vstack([base + a, base + b])))
         self.emit(polys)
         self.layer.strokes.append((0.0, pts))
+
+    def flush_stroke(self) -> None:
+        """Emit the accumulated round-pen polyline (Fritzing & co. write curves as thousands of tiny segments)."""
+        if self.pend is not None:
+            pts = np.array(self.pend)
+            self.emit(geom.stroke(pts, self.pend_ap.dia))
+            self.layer.strokes.append((self.pend_ap.dia, pts))
+            self.pend = None
 
     def arc_points(self, p0, p1, ij) -> np.ndarray:
         i, j = ij
@@ -274,6 +288,7 @@ class _Parser:
                 if n in (1, 2, 3):
                     op = n
                 elif n >= 10:
+                    self.flush_stroke()
                     if n in self.apertures:
                         self.ap = self.apertures[n]
                     else:
@@ -288,6 +303,8 @@ class _Parser:
         if op is None:
             op = self.last_op
         self.last_op = op
+        if op != 1:
+            self.flush_stroke()
         new = self.pos.copy()
         if "X" in vals:
             new[0] = self.num(vals["X"])
@@ -316,6 +333,8 @@ class _Parser:
         self.pos = new
 
     def g_code(self, g: int) -> None:
+        if g in (36, 37):
+            self.flush_stroke()
         if g in (1, 2, 3):
             self.mode = g
         elif g == 36:
@@ -336,6 +355,7 @@ class _Parser:
             self.warn("Coordinate incrementali (G91) non supportate")
 
     def extended(self, stmts: list[str]) -> None:
+        self.flush_stroke()
         head = stmts[0]
         if head.startswith("FS"):
             m = re.match(r"FS([LT])?([AI])?.*?X(\d)(\d)Y(\d)(\d)", head)
@@ -380,6 +400,7 @@ class _Parser:
             self.sr_par = (int(m.group(1)), int(m.group(2)), float(m.group(3)) * self.unit, float(m.group(4)) * self.unit)
 
     def compose(self) -> None:
+        self.flush_stroke()
         if self.sr is not None:
             self.step_repeat("SR")
         geo: list = []

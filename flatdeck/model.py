@@ -12,17 +12,21 @@ from .gerber import GerberLayer, outline_loops, parse_gerber
 
 GERBER_EXT = {".gbr", ".ger", ".gtl", ".gbl", ".gts", ".gbs", ".gto", ".gbo", ".gko", ".gm1", ".gml", ".gtp", ".gbp", ".cmp", ".sol"}
 DRILL_EXT = {".drl", ".xln", ".exc", ".drd", ".txt"}
+KIND_BY_EXT = {".gko": "outline", ".gm1": "outline", ".gml": "outline", ".gto": "silk", ".gbo": "silk",
+               ".gts": "mask", ".gbs": "mask", ".gtp": "mask", ".gbp": "mask"}
+BOTTOM_EXT = {".gbl", ".gbs", ".gbo", ".gbp", ".sol"}
 
 
 @dataclass
 class Layer:
     name: str
-    kind: str                       # copper | outline | drill | job
+    kind: str                       # copper | outline | silk | mask | drill | job
     gerber: GerberLayer | None = None
     drill: DrillFile | None = None
     job: cam.CamResult | None = None
     visible: bool = True
     path: str = ""
+    side: str = "top"               # top | bottom (from the file extension or name)
 
     def bounds(self):
         if self.gerber is not None:
@@ -39,6 +43,8 @@ class Layer:
 
 def sniff_kind(path: str, text: str) -> str:
     """'gerber' or 'drill' from the content (the extension is unreliable)."""
+    if os.path.splitext(path)[1].lower() == ".xy" or text.lstrip().startswith("#"):
+        raise ValueError("Formato non supportato (non è un Gerber né un Excellon): " + os.path.basename(path))
     head = text[:4000]
     if "%FS" in head or "%MO" in head or "G04" in head and "%ADD" in text[:20000]:
         return "gerber"
@@ -64,8 +70,12 @@ class Project:
         else:
             gl = parse_gerber(text, name)
             ext = os.path.splitext(path)[1].lower()
-            guess = "outline" if ext in (".gko", ".gm1", ".gml") or "edge" in name.lower() or "outline" in name.lower() else "copper"
+            low = name.lower()
+            guess = KIND_BY_EXT.get(ext) or ("outline" if "edge" in low or "outline" in low or "contour" in low else "copper")
             lay = Layer(name, guess, gerber=gl, path=path)
+            if guess in ("silk", "mask"):
+                lay.visible = False
+            lay.side = "bottom" if ext in BOTTOM_EXT or "bottom" in low else "top"
         self.layers.append(lay)
         return lay
 
@@ -74,6 +84,19 @@ class Project:
 
     def data_layers(self) -> list:
         return [l for l in self.layers if l.kind != "job"]
+
+    def board_bounds(self):
+        """Bounding box of the board: the outline layer if there is one, else the copper/drill data."""
+        for l in self.data_layers():
+            if l.kind == "outline" and l.gerber is not None and l.gerber.strokes:
+                pts = np.vstack([s for _, s in l.gerber.strokes])
+                return (float(pts[:, 0].min()), float(pts[:, 1].min()), float(pts[:, 0].max()), float(pts[:, 1].max()))
+        return self.bounds()
+
+    def mirror_axis(self) -> float:
+        """X of the vertical axis the board is flipped about to work on its other side."""
+        b = self.board_bounds()
+        return (b[0] + b[2]) / 2 if b else 0.0
 
     def jobs(self) -> list:
         return [l for l in self.layers if l.kind == "job"]
@@ -85,7 +108,8 @@ class Project:
 
     # ----- geometry
     def bounds(self):
-        bs = [b for b in (l.bounds() for l in self.data_layers() if l.kind != "outline") if b]
+        """Copper + drill data (silkscreen, mask and outline only if there is nothing else)."""
+        bs = [b for b in (l.bounds() for l in self.data_layers() if l.kind in ("copper", "drill")) if b]
         bs = bs or [b for b in (l.bounds() for l in self.data_layers()) if b]
         if not bs:
             return None
@@ -93,7 +117,7 @@ class Project:
         return (float(a[:, 0].min()), float(a[:, 1].min()), float(a[:, 2].max()), float(a[:, 3].max()))
 
     def origin(self):
-        b = self.bounds()
+        b = self.board_bounds()
         if self.origin_mode == "file" or b is None:
             return (0.0, 0.0)
         return (b[0], b[1])
@@ -117,7 +141,7 @@ class Project:
 
     # ----- transforms (all data layers together, so they stay registered)
     def _centre(self):
-        b = self.bounds()
+        b = self.board_bounds()
         return ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) if b else (0.0, 0.0)
 
     def transform(self, op: str) -> None:

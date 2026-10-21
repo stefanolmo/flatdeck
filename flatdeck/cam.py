@@ -11,7 +11,7 @@ import numpy as np
 import pyclipper
 
 from . import __version__, geom
-from .excellon import DrillFile
+from .excellon import DrillFile, DrillTool
 
 RAPID_RATE = 1000.0       # mm/min, only used for the time estimate
 
@@ -49,6 +49,7 @@ class IsolationParams:
     feed: float = 120.0
     plunge: float = 40.0
     spindle: int = 1000             # 0 = do not emit M3/M5
+    mirror_x: float | None = None   # flip about the vertical line x = mirror_x (bottom side, board turned over)
 
 
 @dataclass
@@ -62,6 +63,7 @@ class DrillParams:
     feed: float = 80.0              # slot milling feed
     spindle: int = 1000
     tools: dict = field(default_factory=dict)     # tool number -> enabled (missing = enabled)
+    mirror_x: float | None = None
 
 
 @dataclass
@@ -152,6 +154,12 @@ class _Writer:
         return "\n".join(self.lines) + "\n"
 
 
+def _flip(a, axis: float) -> np.ndarray:
+    a = np.array(a, dtype=float)
+    a[:, 0] = 2 * axis - a[:, 0]
+    return a
+
+
 def _check(cond: bool, msg: str) -> None:
     if not cond:
         raise ValueError(msg)
@@ -173,6 +181,8 @@ def isolation_loops(copper, p: IsolationParams, warnings: list | None = None) ->
         elif p.mode == "int":
             loops = [l for l in loops if not geom.is_outer(l)]
         loops = geom.clean(loops)
+        if p.mirror_x is not None:
+            loops = [_flip(l, p.mirror_x)[::-1] for l in loops]
         if not loops and warnings is not None:
             warnings.append(f"Passata {i + 1}: nessun percorso (spazio insufficiente)")
         out.append(loops)
@@ -215,6 +225,9 @@ def drill(df: DrillFile, p: DrillParams, origin=(0.0, 0.0), name: str = "Foratur
     res = CamResult(kind="drill", name=name)
     w = _Writer(origin, "Foratura", p.spindle, p.travel_z)
     chosen = [t for t in sorted(df.tools.values(), key=lambda t: t.dia) if p.tools.get(t.number, True)]
+    if p.mirror_x is not None:
+        chosen = [DrillTool(t.number, t.dia, _flip(t.holes, p.mirror_x) if len(t.holes) else t.holes,
+                            [_flip(s, p.mirror_x) for s in t.slots]) for t in chosen]
     if not chosen:
         raise ValueError("Nessun utensile selezionato")
     w.raw(f"G0 Z{w.n(p.change_z)}")
@@ -321,7 +334,7 @@ def cutout(outer, inner, p: CutoutParams, origin=(0.0, 0.0), name: str = "Contor
     o = np.asarray(outer, dtype=float)
     if geom.area(o) < 0:
         o = o[::-1]
-    for l in geom.offset([o], r):
+    for l in geom.clean(geom.offset([o], r), 0.005):
         centres = []
         if p.gaps != "none":
             x0, y0, x1, y1 = geom.bounds([o])
@@ -336,7 +349,7 @@ def cutout(outer, inner, p: CutoutParams, origin=(0.0, 0.0), name: str = "Contor
         a = np.asarray(l, dtype=float)
         if geom.area(a) < 0:
             a = a[::-1]
-        for q in geom.offset([a], -r):
+        for q in geom.clean(geom.offset([a], -r), 0.005):
             loops.append((q, [], False))
     if not loops:
         raise ValueError("Contorno troppo piccolo per questo utensile")
