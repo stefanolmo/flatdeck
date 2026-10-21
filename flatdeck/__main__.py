@@ -4,7 +4,7 @@ import signal
 import sys
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
 from . import __version__, theme
@@ -22,6 +22,7 @@ def main(argv=None) -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName("flatdeck")
+    app.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), "flatdeck.svg")))
     app.setStyleSheet(theme.STYLESHEET)
     f = QFont(app.font())
     f.setPointSize(10)

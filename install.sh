@@ -21,4 +21,13 @@ cp "$HERE/packaging/flatdeck.svg" "$HOME/.local/share/icons/hicolor/scalable/app
 sed -e "s|@EXEC@|$PREFIX/venv/bin/flatdeck|" -e "s|@ICON@|flatdeck|" "$HERE/packaging/flatdeck.desktop" \
     > "$HOME/.local/share/applications/flatdeck.desktop"
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+
+echo "==> Icona sul desktop"
+DESK="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
+if [ -d "$DESK" ]; then
+    cp "$HOME/.local/share/applications/flatdeck.desktop" "$DESK/flatdeck.desktop"
+    chmod +x "$DESK/flatdeck.desktop"
+    gio set "$DESK/flatdeck.desktop" metadata::trusted true 2>/dev/null || true   # GNOME: permette il doppio clic
+    echo "   Creata $DESK/flatdeck.desktop (se appare senza icona: tasto destro -> Consenti l'avvio)"
+fi
 echo "Fatto. Avvia 'flatdeck' dal menu applicazioni o dal terminale (prova: flatdeck examples/demo_copper.gbr examples/demo_outline.gbr examples/TrafficLight_drill.txt)."

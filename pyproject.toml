@@ -20,6 +20,9 @@ flatdeck = "flatdeck.__main__:main"
 [tool.setuptools]
 packages = ["flatdeck"]
 
+[tool.setuptools.package-data]
+flatdeck = ["flatdeck.svg"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

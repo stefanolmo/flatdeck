@@ -133,3 +133,10 @@ def test_bottom_layer_auto_checks_mirror_and_names_job(win):
     win.dr_mirror.setChecked(True)
     win.gen_drill()
     assert "(specchiato)" in win.project.jobs()[-1].name
+
+
+def test_app_icon_file_loads(app):
+    from PySide6.QtGui import QIcon
+    path = os.path.join(os.path.dirname(__file__), "..", "flatdeck", "flatdeck.svg")
+    pm = QIcon(path).pixmap(64, 64)
+    assert not pm.isNull() and pm.toImage().pixelColor(32, 8).alpha() > 0

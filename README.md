@@ -12,7 +12,7 @@ Il G-code prodotto si carica poi in CNC Deck (o Candle, UGS…) per l'invio alla
 ## Installazione (Ubuntu)
 
 ```bash
-./install.sh          # venv in ~/.local/share/flatdeck, launcher "flatdeck", voce nel menu
+./install.sh          # venv in ~/.local/share/flatdeck, launcher "flatdeck", voce nel menu e icona sul desktop
 flatdeck examples/TrafficLight_copperTop.gtl examples/TrafficLight_copperBottom.gbl examples/TrafficLight_contour.gm1 examples/TrafficLight_drill.txt
 ```
 
