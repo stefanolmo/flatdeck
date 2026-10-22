@@ -24,8 +24,8 @@ Opzioni: `--no-splash` (o `FLATDECK_NO_SPLASH=1`) salta la schermata iniziale di
 1. **Apri** i file (anche più insieme, o trascinali sulla finestra): rame, contorno, foratura, serigrafia, maschera. Il tipo e la faccia
    si riconoscono da estensione e contenuto (`.gtl/.gbl/.gm1/.gto/.gts…`); con il tasto destro su un livello puoi cambiarne il tipo.
    Serigrafia e maschera si possono vedere ma non fresare.
-2. Scheda a **doppia faccia**: genera l'isolamento di ciascun livello di rame. Per quello inferiore la casella *Faccia inferiore: specchia
-   in X* si attiva da sola: la scheda va girata attorno al proprio asse verticale. Lo stesso vale per la foratura dal lato inferiore.
+2. Scheda a **doppia faccia**: genera l'isolamento di ciascun livello di rame. Per quello inferiore spunta *Faccia inferiore: specchia
+   in X* (è disattivata di default): la scheda va girata attorno al proprio asse verticale. Lo stesso vale per la foratura dal lato inferiore.
    (*Specchia X/Y* e *Ruota* in barra, invece, trasformano l'intero progetto.)
 3. L'**origine** G-code è l'angolo basso-sinistro del **contorno della scheda** (o dei dati, se manca il contorno), uguale sulle due facce:
    è il punto da azzerare sulla macchina (X0 Y0), prima e dopo averla girata.

@@ -122,12 +122,13 @@ def test_splash_renders_every_stage(app, tmp_path):
     assert s.total > 100
 
 
-def test_bottom_layer_auto_checks_mirror_and_names_job(win):
+def test_mirror_is_off_by_default_and_names_job(win):
     load_all(win)
-    win.iso_layer.setCurrentIndex(0)
-    assert not win.iso_mirror.isChecked()
-    win.iso_layer.setCurrentIndex(1)                               # copperBottom
-    assert win.iso_mirror.isChecked()
+    win.iso_layer.setCurrentIndex(1)                               # copperBottom: still not mirrored unless asked
+    assert not win.iso_mirror.isChecked() and not win.dr_mirror.isChecked()
+    win.gen_isolation()
+    assert "(specchiato)" not in win.project.jobs()[-1].name
+    win.iso_mirror.setChecked(True)
     win.gen_isolation()
     assert "(specchiato)" in win.project.jobs()[-1].name
     win.dr_mirror.setChecked(True)

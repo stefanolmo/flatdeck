@@ -199,7 +199,6 @@ class MainWindow(QMainWindow):
         self.iso_mirror = QCheckBox("Faccia inferiore: specchia in X")
         self.iso_mirror.setToolTip("Per il rame inferiore: la scheda viene girata attorno al suo asse verticale.\n"
                                    "Azzera X0 Y0 nell'angolo basso-sinistro della scheda girata.")
-        self.iso_layer.currentIndexChanged.connect(self._iso_layer_changed)
         self._form(c, [("Livello rame", self.iso_layer), ("Utensile", self.iso_tool), ("Diametro", self.iso_dia),
                        ("Punta: diametro", self.iso_tip), ("Punta: angolo", self.iso_angle), ("Larghezza taglio", self.iso_eff),
                        ("Passate", self.iso_passes), ("Sovrapposizione", self.iso_overlap), ("Isola", self.iso_mode),
@@ -211,10 +210,6 @@ class MainWindow(QMainWindow):
         c.body.addWidget(self._gen_button("Genera isolamento", self.gen_isolation))
         self._iso_tool_changed()
         return c
-
-    def _iso_layer_changed(self) -> None:
-        lay = self.iso_layer.currentData()
-        self.iso_mirror.setChecked(lay is not None and lay.side == "bottom")
 
     def _iso_tool_changed(self) -> None:
         vbit = self.iso_tool.currentData() == "vbit"
