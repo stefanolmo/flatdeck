@@ -42,7 +42,7 @@ def _eval(expr: str, var: dict) -> float:
     e = re.sub(r"\$(\d+)", lambda m: repr(float(var.get(int(m.group(1)), 0.0))), expr.strip())
     e = e.replace("x", "*").replace("X", "*")
     if not _NUM_RE.match(e):
-        raise ValueError(f"espressione non valida: {expr}")
+        raise ValueError(f"invalid expression: {expr}")
     return float(eval(e, {"__builtins__": {}}, {}))   # noqa: S307 - input restricted to digits and + - * / ( )
 
 
@@ -100,7 +100,7 @@ def _macro_shape(statements: list[str], args: list[float], scale: float) -> list
             rot = p[5] if len(p) > 5 else 0.0
             add(1, [geom.rotate(q, rot) + [cx, cy] for q in th])
         else:
-            raise ValueError(f"primitiva di macro {code} non supportata")
+            raise ValueError(f"macro primitive {code} not supported")
     return [q * scale for q in result]
 
 
@@ -154,7 +154,7 @@ class _Parser:
     def define_aperture(self, body: str) -> None:
         m = re.match(r"ADD(\d+)([^,]+)(?:,(.*))?$", body)
         if not m:
-            self.warn(f"Apertura non riconosciuta: {body}")
+            self.warn(f"Unrecognised aperture: {body}")
             return
         code, name, rest = int(m.group(1)), m.group(2), m.group(3) or ""
         args = [float(x) for x in re.split(r"[xX]", rest) if x.strip()] if rest else []
@@ -181,10 +181,10 @@ class _Parser:
             elif name in self.macros:
                 ap = Aperture("M", _macro_shape(self.macros[name], args, u))
             else:
-                self.warn(f"Apertura D{code}: forma '{name}' sconosciuta")
+                self.warn(f"Aperture D{code}: unknown shape '{name}'")
                 return
         except (ValueError, IndexError) as e:
-            self.warn(f"Apertura D{code} non valida: {e}")
+            self.warn(f"Invalid aperture D{code}: {e}")
             return
         self.apertures[code] = ap
 
@@ -203,7 +203,7 @@ class _Parser:
     def stroke_path(self, pts: np.ndarray) -> None:
         ap = self.ap
         if ap is None:
-            self.warn("Tracciato senza apertura selezionata")
+            self.warn("Draw with no aperture selected")
             return
         if ap.kind == "C":
             if self.pend is not None and ap is self.pend_ap and np.allclose(self.pend[-1], pts[0], atol=1e-9):
@@ -292,7 +292,7 @@ class _Parser:
                     if n in self.apertures:
                         self.ap = self.apertures[n]
                     else:
-                        self.warn(f"Apertura D{n} usata ma non definita")
+                        self.warn(f"Aperture D{n} used but not defined")
                         self.ap = None
             elif c == "M":
                 pass
@@ -352,7 +352,7 @@ class _Parser:
         elif g == 75:
             self.multi = True
         elif g == 91:
-            self.warn("Coordinate incrementali (G91) non supportate")
+            self.warn("Incremental coordinates (G91) not supported")
 
     def extended(self, stmts: list[str]) -> None:
         self.flush_stroke()
@@ -363,7 +363,7 @@ class _Parser:
                 self.zeros = m.group(1) or "L"
                 self.fmt = (int(m.group(3)), int(m.group(4)))
                 if m.group(2) == "I":
-                    self.warn("Coordinate incrementali (FSI) non supportate")
+                    self.warn("Incremental coordinates (FSI) not supported")
         elif head.startswith("MO"):
             self.unit = INCH if head[2:4] == "IN" else 1.0
         elif head.startswith("AM"):
@@ -377,9 +377,9 @@ class _Parser:
             self.step_repeat(head)
         elif head.startswith(("LM", "LR", "LS")):
             if head[2:] not in ("N", "0", "1"):
-                self.warn("Trasformazioni di apertura (LM/LR/LS) ignorate")
+                self.warn("Aperture transforms (LM/LR/LS) ignored")
         elif head.startswith("AB"):
-            self.warn("Blocchi di apertura (AB) non supportati")
+            self.warn("Aperture blocks (AB) not supported")
         # TF / TA / TO / TD attributes, IP, OF, SF, IN, LN: irrelevant for geometry
 
     def flush_region(self) -> None:
@@ -444,11 +444,11 @@ def parse_gerber(text: str, name: str = "") -> GerberLayer:
                 try:
                     ps.block(blk)
                 except (ValueError, IndexError) as e:
-                    ps.warn(f"Blocco ignorato '{blk[:30]}': {e}")
+                    ps.warn(f"Block ignored '{blk[:30]}': {e}")
             i = j + 1
     ps.compose()
     if not ps.layer.polys:
-        ps.warn("Nessuna geometria trovata nel file")
+        ps.warn("No geometry found in the file")
     return ps.layer
 
 

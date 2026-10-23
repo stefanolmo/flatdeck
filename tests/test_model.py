@@ -108,4 +108,4 @@ def test_outline_fallback_without_layer():
     p = Project()
     p.load(os.path.join(EX, FILES[1]))
     outer, inner, note = p.board_outline(margin=1.0)
-    assert "rettangolo" in note and len(outer) == 4
+    assert "bounding box" in note and len(outer) == 4

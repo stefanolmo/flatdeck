@@ -44,7 +44,7 @@ class Layer:
 def sniff_kind(path: str, text: str) -> str:
     """'gerber' or 'drill' from the content (the extension is unreliable)."""
     if os.path.splitext(path)[1].lower() == ".xy" or text.lstrip().startswith("#"):
-        raise ValueError("Formato non supportato (non è un Gerber né un Excellon): " + os.path.basename(path))
+        raise ValueError("Unsupported format (neither Gerber nor Excellon): " + os.path.basename(path))
     head = text[:4000]
     if "%FS" in head or "%MO" in head or "G04" in head and "%ADD" in text[:20000]:
         return "gerber"
@@ -133,8 +133,8 @@ class Project:
                     return closed[0], closed[1:], note
         b = self.bounds()
         if b is None:
-            raise ValueError("Nessun file caricato")
-        return cam.rect_outline(b, margin), [], "Nessun livello contorno: uso il rettangolo dei dati + margine"
+            raise ValueError("No file loaded")
+        return cam.rect_outline(b, margin), [], "No outline layer: using the bounding box of the data + margin"
 
     def copper_paths(self, layer: Layer):
         return layer.gerber.polys

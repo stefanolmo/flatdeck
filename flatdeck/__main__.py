@@ -13,10 +13,10 @@ from .splash import SplashScreen
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="flatdeck", description="Gerber / Excellon → G-code GRBL per fresare circuiti stampati")
-    ap.add_argument("files", nargs="*", help="file Gerber / Excellon da aprire")
-    ap.add_argument("--screenshot", metavar="PNG", help="(sviluppo) salva uno screenshot ed esci")
-    ap.add_argument("--no-splash", action="store_true", help="non mostrare la schermata iniziale")
+    ap = argparse.ArgumentParser(prog="flatdeck", description="Gerber / Excellon → GRBL G-code for milling PCBs")
+    ap.add_argument("files", nargs="*", help="Gerber / Excellon files to open")
+    ap.add_argument("--screenshot", metavar="PNG", help="(development) save a screenshot and exit")
+    ap.add_argument("--no-splash", action="store_true", help="do not show the splash screen")
     args = ap.parse_args(argv)
 
     app = QApplication(sys.argv[:1])

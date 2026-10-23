@@ -38,7 +38,7 @@ class BoardView(QWidget):
         self.show_tool_width = True
         self._cache: dict = {}
         self._drag = None
-        self.empty_message = "Apri un file Gerber o Excellon\n(oppure trascinalo qui)"
+        self.empty_message = "Open a Gerber or Excellon file\n(or drag it here)"
 
     # ----- data
     def set_project(self, project) -> None:

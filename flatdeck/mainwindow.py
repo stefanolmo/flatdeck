@@ -16,7 +16,7 @@ from .viewer import BoardView
 from .widgets import Card, CodeView, dspin, ispin
 
 APP_NAME = "FlatDeck"
-KIND_LABEL = {"copper": "Rame", "outline": "Contorno", "silk": "Serigrafia", "mask": "Maschera", "drill": "Fori", "job": "G-code"}
+KIND_LABEL = {"copper": "Copper", "outline": "Outline", "silk": "Silkscreen", "mask": "Mask", "drill": "Drill", "job": "G-code"}
 
 
 def fmt_time(s: float) -> str:
@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_body()
         self.view.set_project(self.project)
-        self.statusBar().showMessage("Pronto. Apri un file Gerber o Excellon.")
+        self.statusBar().showMessage("Ready. Open a Gerber or Excellon file.")
         self._refresh()
 
     # ------------------------------------------------------------------ construction
@@ -53,14 +53,14 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
-        self._act(tb, "Apri…", "open", self.open_files, "Apri file Gerber / Excellon (anche più file insieme)")
-        self.save_act = self._act(tb, "Salva G-code…", "save", self.save_gcode, "Salva il G-code del lavoro selezionato")
+        self._act(tb, "Open…", "open", self.open_files, "Open Gerber / Excellon files (several at once)")
+        self.save_act = self._act(tb, "Save G-code…", "save", self.save_gcode, "Save the G-code of the selected job")
         tb.addSeparator()
-        self._act(tb, "Specchia X", "mirror_x", lambda: self.transform("mirror_x"), "Specchia tutto il progetto rispetto a un asse verticale (rame inferiore)")
-        self._act(tb, "Specchia Y", "mirror_y", lambda: self.transform("mirror_y"), "Specchia tutto il progetto rispetto a un asse orizzontale")
-        self._act(tb, "Ruota 90°", "rotate", lambda: self.transform("rot90"), "Ruota tutto il progetto di 90° in senso antiorario")
+        self._act(tb, "Mirror X", "mirror_x", lambda: self.transform("mirror_x"), "Mirror the whole project about a vertical axis")
+        self._act(tb, "Mirror Y", "mirror_y", lambda: self.transform("mirror_y"), "Mirror the whole project about a horizontal axis")
+        self._act(tb, "Rotate 90°", "rotate", lambda: self.transform("rot90"), "Rotate the whole project 90° counter-clockwise")
         tb.addSeparator()
-        self._act(tb, "Adatta", "fit", lambda: self.view.fit(), "Inquadra tutto (doppio clic sulla vista)")
+        self._act(tb, "Fit", "fit", lambda: self.view.fit(), "Zoom to the whole board (or double-click the view)")
 
     def _build_body(self) -> None:
         split = QSplitter(Qt.Horizontal)
@@ -72,7 +72,7 @@ class MainWindow(QMainWindow):
         lv = QVBoxLayout(left)
         lv.setContentsMargins(10, 10, 6, 10)
         lv.setSpacing(10)
-        c = Card("Livelli")
+        c = Card("Layers")
         self.layer_list = QListWidget()
         self.layer_list.setMinimumHeight(120)
         self.layer_list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
         self.layer_list.currentRowChanged.connect(self._selection_changed)
         c.body.addWidget(self.layer_list)
         row = QHBoxLayout()
-        rm = QPushButton("Rimuovi")
+        rm = QPushButton("Remove")
         rm.setIcon(theme.icon("trash"))
         rm.clicked.connect(self.remove_selected)
         row.addWidget(rm)
@@ -89,12 +89,12 @@ class MainWindow(QMainWindow):
         c.body.addLayout(row)
         lv.addWidget(c)
 
-        c = Card("Progetto")
+        c = Card("Project")
         g = QGridLayout()
-        g.addWidget(QLabel("Origine G-code"), 0, 0)
+        g.addWidget(QLabel("G-code origin"), 0, 0)
         self.origin_combo = QComboBox()
-        self.origin_combo.addItem("Angolo basso-sinistro dei dati", "board")
-        self.origin_combo.addItem("Coordinate dei file", "file")
+        self.origin_combo.addItem("Lower-left corner of the board", "board")
+        self.origin_combo.addItem("Coordinates as in the files", "file")
         self.origin_combo.currentIndexChanged.connect(self._origin_changed)
         g.addWidget(self.origin_combo, 0, 1)
         c.body.addLayout(g)
@@ -105,9 +105,9 @@ class MainWindow(QMainWindow):
         lv.addWidget(c)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._iso_panel(), "Isolamento")
-        self.tabs.addTab(self._drill_panel(), "Foratura")
-        self.tabs.addTab(self._cutout_panel(), "Contorno")
+        self.tabs.addTab(self._iso_panel(), "Isolation")
+        self.tabs.addTab(self._drill_panel(), "Drilling")
+        self.tabs.addTab(self._cutout_panel(), "Cut-out")
         lv.addWidget(self.tabs)
         lv.addStretch(1)
         sc = QScrollArea()
@@ -121,14 +121,14 @@ class MainWindow(QMainWindow):
         right = QSplitter(Qt.Vertical)
         right.setChildrenCollapsible(False)
         self.view = BoardView()
-        self.view.cursorMoved.connect(lambda x, y: self.statusBar().showMessage(f"X {x:8.3f}   Y {y:8.3f}   mm dall'origine"))
+        self.view.cursorMoved.connect(lambda x, y: self.statusBar().showMessage(f"X {x:8.3f}   Y {y:8.3f}   mm from origin"))
         right.addWidget(self.view)
         bottom = QTabWidget()
         self.code = CodeView()
         self.messages = QPlainTextEdit()
         self.messages.setReadOnly(True)
         bottom.addTab(self.code, "G-code")
-        bottom.addTab(self.messages, "Messaggi")
+        bottom.addTab(self.messages, "Messages")
         self.bottom = bottom
         self.job_info = QLabel("")
         self.job_info.setObjectName("muted")
@@ -175,11 +175,11 @@ class MainWindow(QMainWindow):
         return b
 
     def _iso_panel(self) -> QWidget:
-        c = Card("Isolamento del rame")
+        c = Card("Copper isolation")
         self.iso_layer = QComboBox()
         self.iso_tool = self._field("iso_tool", QComboBox())
-        self.iso_tool.addItem("Fresa cilindrica", "flat")
-        self.iso_tool.addItem("Punta a V", "vbit")
+        self.iso_tool.addItem("Flat end mill", "flat")
+        self.iso_tool.addItem("V-bit", "vbit")
         self.iso_dia = self._field("iso_dia", dspin(0.01, 10, 0.2, 3, " mm", 0.05))
         self.iso_tip = self._field("iso_tip", dspin(0.01, 5, 0.1, 3, " mm", 0.05))
         self.iso_angle = self._field("iso_angle", dspin(5, 120, 30, 0, "°"))
@@ -188,26 +188,26 @@ class MainWindow(QMainWindow):
         self.iso_passes = self._field("iso_passes", ispin(1, 50, 1))
         self.iso_overlap = self._field("iso_overlap", dspin(0, 90, 20, 0, " %"))
         self.iso_mode = self._field("iso_mode", QComboBox())
-        for k, t in (("all", "Esterna e interna"), ("ext", "Solo esterna"), ("int", "Solo interna (fori nel rame)")):
+        for k, t in (("all", "Outside and inside"), ("ext", "Outside only"), ("int", "Inside only (holes in the copper)")):
             self.iso_mode.addItem(t, k)
         self.iso_depth = self._field("iso_depth", dspin(0.005, 5, 0.05, 3, " mm", 0.01))
         self.iso_travel = self._field("iso_travel", dspin(0.5, 50, 2, 1, " mm"))
         self.iso_feed = self._field("iso_feed", dspin(1, 5000, 120, 0, " mm/min"))
         self.iso_plunge = self._field("iso_plunge", dspin(1, 2000, 40, 0, " mm/min"))
         self.iso_spindle = self._field("iso_spindle", ispin(0, 30000, 1000))
-        self.iso_spindle.setToolTip("Valore S del mandrino. 0 = non emettere M3/M5")
-        self.iso_mirror = QCheckBox("Faccia inferiore: specchia in X")
-        self.iso_mirror.setToolTip("Per il rame inferiore: la scheda viene girata attorno al suo asse verticale.\n"
-                                   "Azzera X0 Y0 nell'angolo basso-sinistro della scheda girata.")
-        self._form(c, [("Livello rame", self.iso_layer), ("Utensile", self.iso_tool), ("Diametro", self.iso_dia),
-                       ("Punta: diametro", self.iso_tip), ("Punta: angolo", self.iso_angle), ("Larghezza taglio", self.iso_eff),
-                       ("Passate", self.iso_passes), ("Sovrapposizione", self.iso_overlap), ("Isola", self.iso_mode),
-                       ("Profondità", self.iso_depth), ("Z di sicurezza", self.iso_travel), ("Avanzamento", self.iso_feed),
-                       ("Tuffo", self.iso_plunge), ("Mandrino S", self.iso_spindle)])
+        self.iso_spindle.setToolTip("Spindle S value. 0 = do not emit M3/M5")
+        self.iso_mirror = QCheckBox("Bottom side: mirror in X")
+        self.iso_mirror.setToolTip("For the bottom copper: the board is turned over about its vertical axis.\n"
+                                   "Zero X0 Y0 at the lower-left corner of the turned-over board.")
+        self._form(c, [("Copper layer", self.iso_layer), ("Tool", self.iso_tool), ("Diameter", self.iso_dia),
+                       ("Bit: tip diameter", self.iso_tip), ("Bit: angle", self.iso_angle), ("Cutting width", self.iso_eff),
+                       ("Passes", self.iso_passes), ("Overlap", self.iso_overlap), ("Isolate", self.iso_mode),
+                       ("Depth", self.iso_depth), ("Safe Z", self.iso_travel), ("Feed rate", self.iso_feed),
+                       ("Plunge rate", self.iso_plunge), ("Spindle S", self.iso_spindle)])
         for w in (self.iso_tool, self.iso_dia, self.iso_tip, self.iso_angle, self.iso_depth):
             (w.currentIndexChanged if isinstance(w, QComboBox) else w.valueChanged).connect(lambda *_: self._iso_tool_changed())
         c.body.addWidget(self.iso_mirror)
-        c.body.addWidget(self._gen_button("Genera isolamento", self.gen_isolation))
+        c.body.addWidget(self._gen_button("Generate isolation", self.gen_isolation))
         self._iso_tool_changed()
         return c
 
@@ -217,15 +217,15 @@ class MainWindow(QMainWindow):
         self.iso_tip.setEnabled(vbit)
         self.iso_angle.setEnabled(vbit)
         eff = cam.vbit_diameter(self.iso_tip.value(), self.iso_angle.value(), self.iso_depth.value()) if vbit else self.iso_dia.value()
-        self.iso_eff.setText(f"{eff:.3f} mm" + (" (alla profondità indicata)" if vbit else ""))
+        self.iso_eff.setText(f"{eff:.3f} mm" + (" (at the given depth)" if vbit else ""))
         self._iso_eff = eff
 
     def _drill_panel(self) -> QWidget:
-        c = Card("Foratura")
+        c = Card("Drilling")
         self.dr_file = QComboBox()
         self.dr_file.currentIndexChanged.connect(self._fill_drill_tools)
         self.dr_table = QTableWidget(0, 4)
-        self.dr_table.setHorizontalHeaderLabels(["", "Utensile", "Ø mm", "Fori"])
+        self.dr_table.setHorizontalHeaderLabels(["", "Tool", "Ø mm", "Holes"])
         self.dr_table.verticalHeader().setVisible(False)
         self.dr_table.setSelectionMode(QTableWidget.NoSelection)
         self.dr_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -237,33 +237,33 @@ class MainWindow(QMainWindow):
         self.dr_change = self._field("dr_change", dspin(1, 100, 15, 1, " mm"))
         self.dr_plunge = self._field("dr_plunge", dspin(1, 2000, 40, 0, " mm/min"))
         self.dr_peck = self._field("dr_peck", dspin(0, 10, 0, 2, " mm", 0.1))
-        self.dr_peck.setToolTip("0 = foro con un'unica discesa; altrimenti scende a passi di questa profondità")
+        self.dr_peck.setToolTip("0 = drill each hole in one plunge; otherwise step down by this depth")
         self.dr_spindle = self._field("dr_spindle", ispin(0, 30000, 1000))
-        self.dr_mirror = QCheckBox("Foratura dal lato inferiore: specchia in X")
+        self.dr_mirror = QCheckBox("Drilling from the bottom side: mirror in X")
         c.body.addWidget(self.dr_file)
         c.body.addWidget(self.dr_table)
-        self._form(c, [("Profondità", self.dr_depth), ("Z di sicurezza", self.dr_travel), ("Z cambio punta", self.dr_change),
-                       ("Discesa", self.dr_plunge), ("Foratura a passi", self.dr_peck), ("Mandrino S", self.dr_spindle)])
+        self._form(c, [("Depth", self.dr_depth), ("Safe Z", self.dr_travel), ("Tool-change Z", self.dr_change),
+                       ("Plunge rate", self.dr_plunge), ("Peck drilling", self.dr_peck), ("Spindle S", self.dr_spindle)])
         c.body.addWidget(self.dr_mirror)
-        n = QLabel("Ad ogni cambio punta il programma si ferma (M0): monta la punta e azzera di nuovo Z sulla superficie.")
+        n = QLabel("The program pauses (M0) at every bit change: fit the bit and zero Z on the surface again.")
         n.setObjectName("muted")
         n.setWordWrap(True)
         c.body.addWidget(n)
-        c.body.addWidget(self._gen_button("Genera foratura", self.gen_drill))
+        c.body.addWidget(self._gen_button("Generate drilling", self.gen_drill))
         return c
 
     def _cutout_panel(self) -> QWidget:
-        c = Card("Taglio del contorno")
+        c = Card("Board cut-out")
         self.co_note = QLabel("")
         self.co_note.setObjectName("muted")
         self.co_note.setWordWrap(True)
         self.co_margin = self._field("co_margin", dspin(0, 50, 1.0, 1, " mm"))
-        self.co_margin.setToolTip("Usato solo se non c'è un livello contorno: rettangolo dei dati + margine")
+        self.co_margin.setToolTip("Only used when there is no outline layer: bounding box of the data + margin")
         self.co_dia = self._field("co_dia", dspin(0.1, 10, 1.0, 2, " mm", 0.1))
         self.co_depth = self._field("co_depth", dspin(0.1, 20, 1.8, 2, " mm", 0.1))
         self.co_step = self._field("co_step", dspin(0.05, 10, 0.6, 2, " mm", 0.1))
         self.co_gaps = self._field("co_gaps", QComboBox())
-        for k, t in (("none", "Nessuna (taglio completo)"), ("tb", "2: sopra e sotto"), ("lr", "2: sinistra e destra"), ("four", "4: una per lato")):
+        for k, t in (("none", "None (full cut)"), ("tb", "2: top and bottom"), ("lr", "2: left and right"), ("four", "4: one per side")):
             self.co_gaps.addItem(t, k)
         self.co_gapw = self._field("co_gapw", dspin(0.5, 20, 3, 1, " mm"))
         self.co_travel = self._field("co_travel", dspin(0.5, 50, 2, 1, " mm"))
@@ -271,17 +271,17 @@ class MainWindow(QMainWindow):
         self.co_plunge = self._field("co_plunge", dspin(1, 2000, 30, 0, " mm/min"))
         self.co_spindle = self._field("co_spindle", ispin(0, 30000, 1000))
         c.body.addWidget(self.co_note)
-        self._form(c, [("Margine", self.co_margin), ("Ø fresa", self.co_dia), ("Profondità", self.co_depth), ("Passo discesa", self.co_step),
-                       ("Linguette", self.co_gaps), ("Larghezza linguetta", self.co_gapw), ("Z di sicurezza", self.co_travel),
-                       ("Avanzamento", self.co_feed), ("Tuffo", self.co_plunge), ("Mandrino S", self.co_spindle)])
-        c.body.addWidget(self._gen_button("Genera contorno", self.gen_cutout))
+        self._form(c, [("Margin", self.co_margin), ("Tool Ø", self.co_dia), ("Depth", self.co_depth), ("Step down", self.co_step),
+                       ("Tabs", self.co_gaps), ("Tab width", self.co_gapw), ("Safe Z", self.co_travel),
+                       ("Feed rate", self.co_feed), ("Plunge rate", self.co_plunge), ("Spindle S", self.co_spindle)])
+        c.body.addWidget(self._gen_button("Generate cut-out", self.gen_cutout))
         return c
 
     # ------------------------------------------------------------------ project actions
     def open_files(self) -> None:
         last = self.qs.value("last_dir", os.path.expanduser("~"))
-        paths, _ = QFileDialog.getOpenFileNames(self, "Apri file Gerber / Excellon", last,
-                                                "Gerber ed Excellon (*.gbr *.ger *.gtl *.gbl *.gko *.gm1 *.gml *.cmp *.sol *.drl *.xln *.exc *.txt *.nc);;Tutti i file (*)")
+        paths, _ = QFileDialog.getOpenFileNames(self, "Open Gerber / Excellon files", last,
+                                                "Gerber and Excellon (*.gbr *.ger *.gtl *.gbl *.gko *.gm1 *.gml *.cmp *.sol *.drl *.xln *.exc *.txt *.nc);;All files (*)")
         for p in paths:
             self.load_file(p)
 
@@ -289,10 +289,10 @@ class MainWindow(QMainWindow):
         try:
             lay = self.project.load(path)
         except Exception as e:  # noqa: BLE001 - show any parser failure to the user
-            QMessageBox.warning(self, APP_NAME, f"Impossibile leggere {os.path.basename(path)}:\n{e}")
+            QMessageBox.warning(self, APP_NAME, f"Cannot read {os.path.basename(path)}:\n{e}")
             return
         self.qs.setValue("last_dir", os.path.dirname(path))
-        self._log(f"Caricato {lay.name} ({KIND_LABEL[lay.kind]})")
+        self._log(f"Loaded {lay.name} ({KIND_LABEL[lay.kind]})")
         for w in lay.warnings:
             self._log(f"  ⚠ {w}")
         self._refresh()
@@ -310,19 +310,19 @@ class MainWindow(QMainWindow):
         if not self.project.data_layers():
             return
         if self.project.jobs() and QMessageBox.question(
-                self, APP_NAME, "Il G-code già generato non corrisponderebbe più al progetto trasformato e verrà rimosso. Continuare?") != QMessageBox.Yes:
+                self, APP_NAME, "The G-code already generated would no longer match the transformed project and will be removed. Continue?") != QMessageBox.Yes:
             return
         self.project.transform(op)
         self.view.invalidate()
         self._refresh()
-        self._log(f"Trasformazione: {op}")
+        self._log(f"Transform: {op}")
 
     def _origin_changed(self) -> None:
         mode = self.origin_combo.currentData()
         if mode == self.project.origin_mode:
             return
         if self.project.jobs():                          # their G-code was written with the old origin
-            if QMessageBox.question(self, APP_NAME, "Il G-code già generato usa la vecchia origine e verrà rimosso. Continuare?") != QMessageBox.Yes:
+            if QMessageBox.question(self, APP_NAME, "The G-code already generated uses the old origin and will be removed. Continue?") != QMessageBox.Yes:
                 self.origin_combo.blockSignals(True)
                 self.origin_combo.setCurrentIndex(self.origin_combo.findData(self.project.origin_mode))
                 self.origin_combo.blockSignals(False)
@@ -375,18 +375,18 @@ class MainWindow(QMainWindow):
     def _refresh_info(self) -> None:
         b = self.project.bounds()
         if b is None:
-            self.info.setText("Nessun file caricato.")
+            self.info.setText("No file loaded.")
         else:
             ox, oy = self.project.origin()
             holes = sum(l.drill.hole_count() for l in self.project.layers if l.drill)
             bb = self.project.board_bounds()
-            self.info.setText(f"Scheda: {bb[2] - bb[0]:.2f} × {bb[3] - bb[1]:.2f} mm · fori: {holes}\n"
-                              f"Origine nel file: X {ox:.3f}  Y {oy:.3f}")
+            self.info.setText(f"Board: {bb[2] - bb[0]:.2f} × {bb[3] - bb[1]:.2f} mm · holes: {holes}\n"
+                              f"Origin in the file: X {ox:.3f}  Y {oy:.3f}")
         try:
             outer, inner, note = self.project.board_outline(self.co_margin.value())
-            self.co_note.setText(note or f"Contorno dal livello: {1 + len(inner)} profili ({len(inner)} interni)")
+            self.co_note.setText(note or f"Outline from layer: {1 + len(inner)} profiles ({len(inner)} inner)")
         except ValueError:
-            self.co_note.setText("Carica almeno un livello.")
+            self.co_note.setText("Load at least one layer.")
 
     def _item_changed(self, item: QListWidgetItem) -> None:
         r = self.layer_list.row(item)
@@ -402,7 +402,7 @@ class MainWindow(QMainWindow):
         self.save_act.setEnabled(job is not None)
         if job is not None:
             self.code.setPlainText(job.gcode)
-            self.job_info.setText(f"{job.lines} righe · taglio {job.length / 1000:.2f} m · tempo stimato ~{fmt_time(job.time_s)}   ")
+            self.job_info.setText(f"{job.lines} lines · cutting {job.length / 1000:.2f} m · estimated time ~{fmt_time(job.time_s)}   ")
             self.bottom.setCurrentIndex(0)
             for w in job.warnings:
                 self._log(f"⚠ {job.name}: {w}")
@@ -416,7 +416,7 @@ class MainWindow(QMainWindow):
             return
         m = QMenu(self)
         for kind in ("copper", "outline", "silk", "mask"):
-            a = m.addAction(f"Tratta come: {KIND_LABEL[kind]}")
+            a = m.addAction(f"Treat as: {KIND_LABEL[kind]}")
             a.setEnabled(lay.kind != kind)
             a.triggered.connect(lambda _=False, k=kind: self._set_kind(lay, k))
         m.exec(self.layer_list.mapToGlobal(pos))
@@ -441,7 +441,7 @@ class MainWindow(QMainWindow):
             self.dr_table.setItem(r, 0, chk)
             self.dr_table.setItem(r, 1, QTableWidgetItem(f"T{t.number}"))
             self.dr_table.setItem(r, 2, QTableWidgetItem(f"{t.dia:.3f}"))
-            self.dr_table.setItem(r, 3, QTableWidgetItem(f"{len(t.holes)}" + (f" + {len(t.slots)} asole" if t.slots else "")))
+            self.dr_table.setItem(r, 3, QTableWidgetItem(f"{len(t.holes)}" + (f" + {len(t.slots)} slots" if t.slots else "")))
 
     # ------------------------------------------------------------------ generation
     def _run(self, name: str, fn) -> None:
@@ -454,13 +454,13 @@ class MainWindow(QMainWindow):
             return
         except Exception as e:  # noqa: BLE001
             QApplication.restoreOverrideCursor()
-            QMessageBox.critical(self, APP_NAME, f"Errore inatteso durante la generazione:\n{e}")
+            QMessageBox.critical(self, APP_NAME, f"Unexpected error while generating:\n{e}")
             return
         QApplication.restoreOverrideCursor()
         lay = self.project.add_job(res)
         self._refresh()
         self.layer_list.setCurrentRow(self.project.layers.index(lay))
-        self._log(f"Generato {res.name}: {res.lines} righe, tempo ~{fmt_time(res.time_s)}")
+        self._log(f"Generated {res.name}: {res.lines} lines, time ~{fmt_time(res.time_s)}")
 
     def _next_name(self, base: str) -> str:
         n = sum(1 for l in self.project.jobs() if l.name.startswith(base))
@@ -469,26 +469,26 @@ class MainWindow(QMainWindow):
     def gen_isolation(self) -> None:
         lay = self.iso_layer.currentData()
         if lay is None:
-            QMessageBox.information(self, APP_NAME, "Carica un livello di rame.")
+            QMessageBox.information(self, APP_NAME, "Load a copper layer.")
             return
         p = cam.IsolationParams(tool_dia=self._iso_eff, passes=self.iso_passes.value(), overlap=self.iso_overlap.value() / 100,
                                 mode=self.iso_mode.currentData(), cut_z=-self.iso_depth.value(), travel_z=self.iso_travel.value(),
                                 feed=self.iso_feed.value(), plunge=self.iso_plunge.value(), spindle=self.iso_spindle.value(),
                                 mirror_x=self.project.mirror_axis() if self.iso_mirror.isChecked() else None)
-        name = self._next_name(f"Isolamento {lay.name}" + (" (specchiato)" if p.mirror_x is not None else ""))
+        name = self._next_name(f"Isolation {lay.name}" + (" (mirrored)" if p.mirror_x is not None else ""))
         self._run("iso", lambda: cam.isolate(lay.gerber.polys, p, self.project.origin(), name))
 
     def gen_drill(self) -> None:
         lay = self.dr_file.currentData()
         if lay is None:
-            QMessageBox.information(self, APP_NAME, "Carica un file di foratura.")
+            QMessageBox.information(self, APP_NAME, "Load a drill file.")
             return
         tools = {self.dr_table.item(r, 0).data(Qt.UserRole): self.dr_table.item(r, 0).checkState() == Qt.Checked
                  for r in range(self.dr_table.rowCount())}
         p = cam.DrillParams(drill_z=-self.dr_depth.value(), travel_z=self.dr_travel.value(), change_z=self.dr_change.value(),
                             plunge=self.dr_plunge.value(), peck=self.dr_peck.value(), spindle=self.dr_spindle.value(), tools=tools,
                             mirror_x=self.project.mirror_axis() if self.dr_mirror.isChecked() else None)
-        name = self._next_name(f"Foratura {lay.name}" + (" (specchiato)" if p.mirror_x is not None else ""))
+        name = self._next_name(f"Drilling {lay.name}" + (" (mirrored)" if p.mirror_x is not None else ""))
         self._run("drill", lambda: cam.drill(lay.drill, p, self.project.origin(), name))
 
     def gen_cutout(self) -> None:
@@ -497,7 +497,7 @@ class MainWindow(QMainWindow):
             p = cam.CutoutParams(tool_dia=self.co_dia.value(), cut_z=-self.co_depth.value(), step=self.co_step.value(),
                                  travel_z=self.co_travel.value(), feed=self.co_feed.value(), plunge=self.co_plunge.value(),
                                  gaps=self.co_gaps.currentData(), gap_width=self.co_gapw.value(), spindle=self.co_spindle.value())
-            res = cam.cutout(outer, inner, p, self.project.origin(), self._next_name("Contorno"))
+            res = cam.cutout(outer, inner, p, self.project.origin(), self._next_name("Cut-out"))
             if note:
                 res.warnings.append(note)
             return res
@@ -509,12 +509,12 @@ class MainWindow(QMainWindow):
             return
         last = self.qs.value("save_dir", os.path.expanduser("~"))
         safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in lay.name)
-        path, _ = QFileDialog.getSaveFileName(self, "Salva G-code", os.path.join(last, safe + ".nc"), "G-code (*.nc *.gcode *.ngc)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save G-code", os.path.join(last, safe + ".nc"), "G-code (*.nc *.gcode *.ngc)")
         if path:
             with open(path, "w") as f:
                 f.write(lay.job.gcode)
             self.qs.setValue("save_dir", os.path.dirname(path))
-            self.statusBar().showMessage(f"Salvato {path}", 5000)
+            self.statusBar().showMessage(f"Saved {path}", 5000)
 
     # ------------------------------------------------------------------ drag & drop
     def dragEnterEvent(self, ev) -> None:

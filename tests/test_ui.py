@@ -127,13 +127,13 @@ def test_mirror_is_off_by_default_and_names_job(win):
     win.iso_layer.setCurrentIndex(1)                               # copperBottom: still not mirrored unless asked
     assert not win.iso_mirror.isChecked() and not win.dr_mirror.isChecked()
     win.gen_isolation()
-    assert "(specchiato)" not in win.project.jobs()[-1].name
+    assert "(mirrored)" not in win.project.jobs()[-1].name
     win.iso_mirror.setChecked(True)
     win.gen_isolation()
-    assert "(specchiato)" in win.project.jobs()[-1].name
+    assert "(mirrored)" in win.project.jobs()[-1].name
     win.dr_mirror.setChecked(True)
     win.gen_drill()
-    assert "(specchiato)" in win.project.jobs()[-1].name
+    assert "(mirrored)" in win.project.jobs()[-1].name
 
 
 def test_app_icon_file_loads(app):

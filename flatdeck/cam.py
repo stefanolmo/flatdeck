@@ -168,9 +168,9 @@ def _check(cond: bool, msg: str) -> None:
 # --------------------------------------------------------------------------- isolation
 def isolation_loops(copper, p: IsolationParams, warnings: list | None = None) -> list:
     """Closed tool-centre loops around the copper, one set per pass, innermost pass first."""
-    _check(p.tool_dia > 0, "Il diametro dell'utensile deve essere positivo")
-    _check(1 <= p.passes <= 50, "Le passate devono essere tra 1 e 50")
-    _check(0 <= p.overlap < 1, "La sovrapposizione deve essere tra 0 e 99%")
+    _check(p.tool_dia > 0, "Tool diameter must be positive")
+    _check(1 <= p.passes <= 50, "Passes must be between 1 and 50")
+    _check(0 <= p.overlap < 1, "Overlap must be between 0 and 99%")
     base = geom.union(copper)
     step = p.tool_dia * (1 - p.overlap)
     out = []
@@ -184,18 +184,18 @@ def isolation_loops(copper, p: IsolationParams, warnings: list | None = None) ->
         if p.mirror_x is not None:
             loops = [_flip(l, p.mirror_x)[::-1] for l in loops]
         if not loops and warnings is not None:
-            warnings.append(f"Passata {i + 1}: nessun percorso (spazio insufficiente)")
+            warnings.append(f"Pass {i + 1}: no toolpath (not enough room)")
         out.append(loops)
     return out
 
 
-def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolamento") -> CamResult:
-    _check(p.cut_z < 0, "La profondità di taglio deve essere negativa")
-    _check(p.travel_z > 0, "La Z di sicurezza deve essere positiva")
-    _check(p.feed > 0 and p.plunge > 0, "Gli avanzamenti devono essere positivi")
+def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolation") -> CamResult:
+    _check(p.cut_z < 0, "Cutting depth must be negative")
+    _check(p.travel_z > 0, "Safe Z must be positive")
+    _check(p.feed > 0 and p.plunge > 0, "Feed rates must be positive")
     res = CamResult(kind="isolation", name=name, tool_dia=p.tool_dia)
     passes = isolation_loops(copper, p, res.warnings)
-    w = _Writer(origin, f"Isolamento, utensile {p.tool_dia:g} mm, {p.passes} passate", p.spindle, p.travel_z)
+    w = _Writer(origin, f"Isolation, tool {p.tool_dia:g} mm, {p.passes} passes", p.spindle, p.travel_z)
     w.start()
     cur = np.asarray(origin, dtype=float)
     n_loops = 0
@@ -212,24 +212,24 @@ def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolamen
             n_loops += 1
     w.end()
     if not n_loops:
-        res.warnings.append("Nessun percorso generato")
+        res.warnings.append("No toolpath generated")
     res.gcode, res.length, res.time_s = w.text(), w.cut_len, w.time
     return res
 
 
 # --------------------------------------------------------------------------- drilling
-def drill(df: DrillFile, p: DrillParams, origin=(0.0, 0.0), name: str = "Foratura") -> CamResult:
-    _check(p.drill_z < 0, "La profondità di foratura deve essere negativa")
-    _check(p.travel_z > 0 and p.change_z >= p.travel_z, "Z di sicurezza > 0 e Z cambio utensile ≥ Z di sicurezza")
-    _check(p.plunge > 0 and p.feed > 0, "Gli avanzamenti devono essere positivi")
+def drill(df: DrillFile, p: DrillParams, origin=(0.0, 0.0), name: str = "Drilling") -> CamResult:
+    _check(p.drill_z < 0, "Drilling depth must be negative")
+    _check(p.travel_z > 0 and p.change_z >= p.travel_z, "Safe Z must be > 0 and tool-change Z ≥ safe Z")
+    _check(p.plunge > 0 and p.feed > 0, "Feed rates must be positive")
     res = CamResult(kind="drill", name=name)
-    w = _Writer(origin, "Foratura", p.spindle, p.travel_z)
+    w = _Writer(origin, "Drilling", p.spindle, p.travel_z)
     chosen = [t for t in sorted(df.tools.values(), key=lambda t: t.dia) if p.tools.get(t.number, True)]
     if p.mirror_x is not None:
         chosen = [DrillTool(t.number, t.dia, _flip(t.holes, p.mirror_x) if len(t.holes) else t.holes,
                             [_flip(s, p.mirror_x) for s in t.slots]) for t in chosen]
     if not chosen:
-        raise ValueError("Nessun utensile selezionato")
+        raise ValueError("No tool selected")
     w.raw(f"G0 Z{w.n(p.change_z)}")
     cur = np.asarray(origin, dtype=float)
     for k, t in enumerate(chosen):
@@ -237,10 +237,10 @@ def drill(df: DrillFile, p: DrillParams, origin=(0.0, 0.0), name: str = "Foratur
             if p.spindle > 0:
                 w.raw("M5")
         w.rapid_z(p.change_z)
-        w.raw(f"(MSG, Monta la punta da {t.dia:.2f} mm e azzera Z sulla superficie del pezzo)")
+        w.raw(f"(MSG, Fit the {t.dia:.2f} mm bit and zero Z on the workpiece surface)")
         w.raw("M0")
         w.spindle_on()
-        w.raw(f"(Utensile T{t.number}: {t.dia:.3f} mm - {len(t.holes)} fori, {len(t.slots)} asole)")
+        w.raw(f"(Tool T{t.number}: {t.dia:.3f} mm - {len(t.holes)} holes, {len(t.slots)} slots)")
         for h in geom.order_nearest([h.reshape(1, 2) for h in t.holes], cur):
             h = h[0]
             w.lift()
@@ -323,11 +323,11 @@ def split_gaps(loop: np.ndarray, centres: list, width: float) -> list:
     return out
 
 
-def cutout(outer, inner, p: CutoutParams, origin=(0.0, 0.0), name: str = "Contorno") -> CamResult:
+def cutout(outer, inner, p: CutoutParams, origin=(0.0, 0.0), name: str = "Cut-out") -> CamResult:
     """`outer`: closed loop of the board; `inner`: list of closed loops to be cut out inside the board."""
-    _check(p.tool_dia > 0, "Il diametro dell'utensile deve essere positivo")
-    _check(p.cut_z < 0 and p.step > 0, "Profondità negativa e passo di discesa positivo")
-    _check(p.feed > 0 and p.plunge > 0, "Gli avanzamenti devono essere positivi")
+    _check(p.tool_dia > 0, "Tool diameter must be positive")
+    _check(p.cut_z < 0 and p.step > 0, "Depth must be negative and step-down positive")
+    _check(p.feed > 0 and p.plunge > 0, "Feed rates must be positive")
     res = CamResult(kind="cutout", name=name, tool_dia=p.tool_dia)
     r = p.tool_dia / 2
     loops = []                                         # (loop, gap_centres, is_board_outline)
@@ -343,7 +343,7 @@ def cutout(outer, inner, p: CutoutParams, origin=(0.0, 0.0), name: str = "Contor
                      "four": [(xm, y0), (xm, y1), (x0, ym), (x1, ym)]}[p.gaps]
             centres = [_point_to_s(l, s) for s in sides]
             if geom.path_length(l, True) < 4 * p.gap_width * len(centres):
-                res.warnings.append("Le linguette occupano gran parte del perimetro")
+                res.warnings.append("The tabs take up most of the perimeter")
         loops.append((l, centres, True))
     for l in inner:
         a = np.asarray(l, dtype=float)
@@ -352,8 +352,8 @@ def cutout(outer, inner, p: CutoutParams, origin=(0.0, 0.0), name: str = "Contor
         for q in geom.clean(geom.offset([a], -r), 0.005):
             loops.append((q, [], False))
     if not loops:
-        raise ValueError("Contorno troppo piccolo per questo utensile")
-    w = _Writer(origin, f"Contorno, utensile {p.tool_dia:g} mm", p.spindle, p.travel_z)
+        raise ValueError("Outline too small for this tool")
+    w = _Writer(origin, f"Cut-out, tool {p.tool_dia:g} mm", p.spindle, p.travel_z)
     w.start()
     depths = []
     z = 0.0

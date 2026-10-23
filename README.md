@@ -1,90 +1,89 @@
 # FlatDeck
 
-<p align="center"><img src="docs/splash.png" alt="FlatDeck - schermata iniziale" width="640"></p>
+<p align="center"><img src="docs/splash.png" alt="FlatDeck splash screen" width="640"></p>
 
-Da **Gerber** ed **Excellon** a **G-code GRBL 1.1** per fresare circuiti stampati con una CNC (pensato per la CNC 1610 Pro).
-Alternativa moderna e minimale a FlatCAM, che non gira più sulle versioni recenti di Ubuntu (Python 2 / PyQt4).
-Stesso stile e stesso stack di [CNC Deck](https://github.com/stefanolmo/cncgrbl): Python 3 + Qt6 (PySide6), `numpy`, `pyclipper`.
-Il G-code prodotto si carica poi in CNC Deck (o Candle, UGS…) per l'invio alla macchina.
+Turn **Gerber** and **Excellon** files into **GRBL 1.1 G-code** for milling printed circuit boards on a CNC (built around the CNC 1610 Pro).
+A modern, minimal alternative to FlatCAM, which no longer runs on recent Ubuntu releases (Python 2 / PyQt4).
+Same look and stack as [CNC Deck](https://github.com/stefanolmo/cncgrbl): Python 3 + Qt6 (PySide6), `numpy`, `pyclipper`.
+Load the generated G-code in CNC Deck (or Candle, UGS…) to send it to the machine.
 
-<p align="center"><img src="docs/main.png" alt="FlatDeck - isolamento, foratura e contorno" width="900"></p>
+<p align="center"><img src="docs/main.png" alt="FlatDeck - isolation, drilling and cut-out" width="900"></p>
 
-## Installazione (Ubuntu)
+## Installation (Ubuntu)
 
 ```bash
-./install.sh          # venv in ~/.local/share/flatdeck, launcher "flatdeck", voce nel menu e icona sul desktop
+./install.sh          # venv in ~/.local/share/flatdeck, "flatdeck" launcher, menu entry and desktop icon
 flatdeck examples/TrafficLight_copperTop.gtl examples/TrafficLight_copperBottom.gbl examples/TrafficLight_contour.gm1 examples/TrafficLight_drill.txt
 ```
 
-Senza installare: `pip install -r requirements.txt && python3 -m flatdeck`.
-Opzioni: `--no-splash` (o `FLATDECK_NO_SPLASH=1`) salta la schermata iniziale di 3 secondi.
+Without installing: `pip install -r requirements.txt && python3 -m flatdeck`.
+Options: `--no-splash` (or `FLATDECK_NO_SPLASH=1`) skips the 3-second splash screen.
 
-## Flusso di lavoro
+## Workflow
 
-1. **Apri** i file (anche più insieme, o trascinali sulla finestra): rame, contorno, foratura, serigrafia, maschera. Il tipo e la faccia
-   si riconoscono da estensione e contenuto (`.gtl/.gbl/.gm1/.gto/.gts…`); con il tasto destro su un livello puoi cambiarne il tipo.
-   Serigrafia e maschera si possono vedere ma non fresare.
-2. Scheda a **doppia faccia**: genera l'isolamento di ciascun livello di rame. Per quello inferiore spunta *Faccia inferiore: specchia
-   in X* (è disattivata di default): la scheda va girata attorno al proprio asse verticale. Lo stesso vale per la foratura dal lato inferiore.
-   (*Specchia X/Y* e *Ruota* in barra, invece, trasformano l'intero progetto.)
-3. L'**origine** G-code è l'angolo basso-sinistro del **contorno della scheda** (o dei dati, se manca il contorno), uguale sulle due facce:
-   è il punto da azzerare sulla macchina (X0 Y0), prima e dopo averla girata.
-4. Nelle schede **Isolamento / Foratura / Contorno** imposta i parametri (vengono ricordati) e premi *Genera*: ogni lavoro compare
-   nell'elenco dei livelli con anteprima del percorso (la fascia chiara è la larghezza dell'utensile) e il G-code in basso.
-5. **Salva G-code…** con il lavoro selezionato.
+1. **Open** your files (several at once, or drag them onto the window): copper, outline, drill, silkscreen, mask. Layer type and side are
+   recognised from the extension and the content (`.gtl/.gbl/.gm1/.gto/.gts…`); right-click a layer to change its type.
+   Silkscreen and mask can be viewed but not milled.
+2. **Double-sided boards**: generate the isolation of each copper layer. For the bottom one, tick *Bottom side: mirror in X*
+   (off by default): the board is turned over about its own vertical axis. The same applies to drilling from the bottom side.
+   (The *Mirror X/Y* and *Rotate* toolbar buttons, on the other hand, transform the whole project.)
+3. The G-code **origin** is the lower-left corner of the **board outline** (or of the data, if there is no outline), identical on both
+   sides: it is the point to zero on the machine (X0 Y0), before and after turning the board over.
+4. In the **Isolation / Drilling / Cut-out** tabs set the parameters (they are remembered) and press *Generate*: every job appears in the
+   layer list with a toolpath preview (the pale band is the tool width) and its G-code at the bottom.
+5. **Save G-code…** saves the selected job.
 
-| Operazione | Cosa fa |
+| Operation | What it does |
 |---|---|
-| Isolamento | offset del rame con `pyclipper`; passate multiple con sovrapposizione; esterna / interna / entrambe; fresa cilindrica o **punta a V** (il diametro di taglio si calcola da punta, angolo e profondità); percorsi ordinati per vicinanza |
-| Foratura | un lavoro per file, utensili selezionabili e ordinati per diametro, **pausa M0 a ogni cambio punta**, foratura a passi opzionale, asole (G85 e fresate) |
-| Contorno | dal livello contorno (profili chiusi concatenati, interni inclusi) oppure dal rettangolo dei dati + margine; passate a profondità crescente; **linguette** (2 o 4) per non staccare la scheda |
-| Trasformazioni | specchia X/Y, ruota 90°, tutte sull'intero progetto |
+| Isolation | copper offset with `pyclipper`; multiple passes with overlap; outside / inside / both; flat end mill or **V-bit** (cutting width computed from tip, angle and depth); toolpaths ordered by proximity |
+| Drilling | one job per file, selectable tools sorted by diameter, **M0 pause at every bit change**, optional peck drilling, slots (G85 and routed) |
+| Cut-out | from the outline layer (closed profiles are chained, inner ones included) or from the data bounding box + margin; progressive depth passes; **tabs** (2 or 4) so the board does not come loose |
+| Transforms | mirror X/Y, rotate 90°, all applied to the whole project |
 
-G-code: solo `G0 G1 G4 G21 G90 G94 M0 M2 M3 M5`, righe < 80 caratteri, avanzamento scritto solo quando cambia; il mandrino parte
-con `M3 S…` (S = 0 per non emetterlo). La Z viene azzerata **sulla superficie del rame**: profondità sempre positive nell'interfaccia.
+G-code: only `G0 G1 G4 G21 G90 G94 M0 M2 M3 M5`, lines shorter than 80 characters, feed rate written only when it changes; the spindle starts
+with `M3 S…` (S = 0 to omit it). Z is zeroed **on the copper surface**: depths are always positive in the interface.
 
-## Limiti della v1 (cosa NON c'è, rispetto a FlatCAM)
+## Limits of v1 (what is NOT there compared with FlatCAM)
 
-- Niente rimozione del rame (NCC), riempimento (paint), doppia faccia con fori di allineamento, autolivellamento, invio alla macchina.
-- Dopo un cambio punta **devi riazzerare Z** (nessun probing automatico).
-- Gerber: non supportati i blocchi di apertura (`AB`), le trasformazioni di apertura (`LM/LR/LS`, ignorate con avviso), la macro *moiré*,
-  le coordinate incrementali. Le apertura non rotonde su tracciati sono approssimate con l'inviluppo convesso. Le macro (KiCad, Eagle,
-  Altium) e step & repeat sono supportate.
-- Excellon: i pattern ripetuti (`R`) sono ignorati con avviso. Senza `TZ/LZ` nell'intestazione si assume che gli zeri finali siano
-  omessi (conta solo se i numeri hanno meno cifre del formato).
-- La generazione è sincrona: con molte passate su schede grandi l'interfaccia può restare ferma qualche secondo.
+- No copper clearing (NCC), no paint, no double-sided alignment holes, no auto-levelling, no sending to the machine.
+- After a bit change you must **zero Z again** (no automatic probing).
+- Gerber: aperture blocks (`AB`), aperture transforms (`LM/LR/LS`, ignored with a warning), the *moiré* macro and incremental
+  coordinates are not supported. Non-round apertures used for draws are approximated by their convex hull. Macros (KiCad, Eagle,
+  Altium) and step & repeat are supported.
+- Excellon: repeat patterns (`R`) are ignored with a warning. Without `TZ/LZ` in the header trailing zeros are assumed to be
+  omitted (it only matters when numbers have fewer digits than the format).
+- Generation is synchronous: with many passes on large boards the interface may freeze for a few seconds.
 
-**Verifica sulla macchina reale**: i test controllano geometria e formato del G-code, non il comportamento della fresa. Il primo
-lavoro va fatto con la fresa alzata (o senza rame) e con la mano sull'emergenza.
+**Test on the real machine with care**: the tests check geometry and G-code format, not the behaviour of the mill. Run the first job
+with the bit raised (or without copper) and a hand on the emergency stop.
 
-## Esempi
+## Examples
 
-`examples/TrafficLight_*` è una scheda reale a doppia faccia esportata da **Fritzing** (68,35 × 53,11 mm, 56 fori, 4 punte, pollici):
-rame sopra e sotto, contorno (5400 micro-segmenti, contigui vengono fusi in un'unica polilinea), foratura, maschera e serigrafia.
-Un test verifica che tutti i 56 fori cadano su una piazzola di entrambi i livelli di rame.
-Non provato (per ora) con Gerber di KiCad, Eagle o EasyEDA.
+`examples/TrafficLight_*` is a real double-sided board exported from **Fritzing** (68.35 × 53.11 mm, 56 holes, 4 bits, inches):
+top and bottom copper, outline (5400 tiny segments, contiguous ones are merged into a single polyline), drill, mask and silkscreen.
+A test checks that all 56 holes fall on a pad of both copper layers.
+Not tried (yet) with Gerber files from KiCad, Eagle or EasyEDA.
 
-## Struttura
+## Layout
 
 ```
-flatdeck/geom.py        poligoni su Clipper: unione, differenza, offset, tratto con penna tonda, ordinamento percorsi
-flatdeck/gerber.py      parser RS-274X: aperture, macro, archi G74/G75, regioni, polarità, step & repeat; catene del contorno
-flatdeck/excellon.py    parser Excellon: unità, formato/zeri, fori, asole
-flatdeck/cam.py         isolamento, foratura, contorno -> G-code
-flatdeck/model.py       progetto: livelli, trasformazioni, origine, contorno della scheda (senza Qt)
-flatdeck/viewer.py      vista 2D (QPainter): pan, zoom, griglia in mm dall'origine
-flatdeck/mainwindow.py  finestra principale      flatdeck/splash.py  schermata iniziale
+flatdeck/geom.py        polygons on Clipper: union, difference, offset, round-pen strokes, path ordering
+flatdeck/gerber.py      RS-274X parser: apertures, macros, G74/G75 arcs, regions, polarity, step & repeat; outline chaining
+flatdeck/excellon.py    Excellon parser: units, format/zeros, holes, slots
+flatdeck/cam.py         isolation, drilling, cut-out -> G-code
+flatdeck/model.py       project: layers, transforms, origin, board outline (no Qt)
+flatdeck/viewer.py      2D view (QPainter): pan, zoom, grid in mm from the origin
+flatdeck/mainwindow.py  main window      flatdeck/splash.py  splash screen
 ```
 
-## Sviluppo
+## Development
 
 ```bash
 pip install -e .[dev]
-python -m pytest                                              # parser, CAM, modello, UI offscreen
-python examples/make_demo.py                                  # rigenera il rame/contorno di esempio
-QT_QPA_PLATFORM=offscreen python3 docs/make_screenshots.py    # rigenera le immagini del README
+python -m pytest                                              # parsers, CAM, model, offscreen UI
+QT_QPA_PLATFORM=offscreen python3 docs/make_screenshots.py    # regenerate the README images
 ```
 
-Decisioni da non cambiare senza motivo: la geometria è float in mm, Clipper lavora a 0,1 µm; dopo ogni specchiatura si rifà l'unione
-(altrimenti l'orientamento dei contorni si inverte e gli offset vanno al contrario); il tratto di una linea con apertura rotonda è un
-`ET_OPENROUND`, non un rettangolo; `bounds` del progetto ignora il livello contorno finché c'è altro, così l'origine segue il rame.
+Decisions not to change without a reason: geometry is float mm and Clipper works at 0.1 µm; the union is redone after every mirroring
+(otherwise contour orientation flips and offsets go the wrong way); a line drawn with a round aperture is an `ET_OPENROUND`, not a
+rectangle; the project `bounds` ignore the outline layer as long as there is other data, so the fit follows the copper.

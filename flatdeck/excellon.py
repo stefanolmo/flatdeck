@@ -94,19 +94,19 @@ def parse_excellon(text: str, name: str = "") -> DrillFile:
                 defs[int(m.group(1))] = float(m.group(2))
                 continue
             if up.startswith("ICI"):
-                df.warnings.append("Coordinate incrementali (ICI) non supportate")
+                df.warnings.append("Incremental coordinates (ICI) not supported")
             continue
         up = line.upper()
         if unit is None:
             unit = "INCH"
-            df.warnings.append("Unità non specificate nel file: assunti pollici")
+            df.warnings.append("Units not specified in the file: assuming inches")
         m = re.match(r"^T(\d+)$", up)
         if m:
             end_route()
             t = int(m.group(1))
             cur = t if t != 0 else None
             if cur is not None and cur not in defs:
-                df.warnings.append(f"Utensile T{cur} non definito")
+                df.warnings.append(f"Tool T{cur} not defined")
                 cur = None
             continue
         if up.startswith(("M30", "M00")):
@@ -121,12 +121,12 @@ def parse_excellon(text: str, name: str = "") -> DrillFile:
             continue
         if up in ("G05", "G90", "G91", "G93", "G40", "G81") or up.startswith(("M71", "M72", "FMAT", "VER", "ICI")):
             if up == "G91":
-                df.warnings.append("Coordinate incrementali (G91) non supportate")
+                df.warnings.append("Incremental coordinates (G91) not supported")
             if up == "G05":
                 route = False
             continue
         if up.startswith("R") and re.match(r"^R\d+", up):
-            df.warnings.append("Pattern ripetuti (R) non supportati")
+            df.warnings.append("Repeat patterns (R) not supported")
             continue
         g = re.match(r"^G0?([01])", up)
         if g:
@@ -153,7 +153,7 @@ def parse_excellon(text: str, name: str = "") -> DrillFile:
             elif cur is not None:
                 holes.setdefault(cur, []).append(pos.copy())
             else:
-                df.warnings.append("Foro senza utensile selezionato")
+                df.warnings.append("Hole with no tool selected")
             continue
     end_route()
     for t, dia in defs.items():
@@ -162,5 +162,5 @@ def parse_excellon(text: str, name: str = "") -> DrillFile:
         if h or s:
             df.tools[t] = DrillTool(t, dia * scale() if unit == "INCH" else dia, np.array(h).reshape(-1, 2), s)
     if not df.tools:
-        df.warnings.append("Nessun foro trovato nel file")
+        df.warnings.append("No holes found in the file")
     return df
