@@ -104,6 +104,16 @@ def difference(subject, clip) -> Paths:
     return from_c(pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO))
 
 
+def intersection(subject, clip) -> Paths:
+    s, c = to_c(subject), to_c(clip)
+    if not s or not c:
+        return []
+    pc = pyclipper.Pyclipper()
+    pc.AddPaths(s, pyclipper.PT_SUBJECT, True)
+    pc.AddPaths(c, pyclipper.PT_CLIP, True)
+    return from_c(pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO))
+
+
 def offset(paths, delta: float, join=pyclipper.JT_ROUND, miter: float = 2.0) -> Paths:
     """Grow (delta > 0) or shrink closed polygons. Input must be normalised (use union first)."""
     c = to_c(paths)

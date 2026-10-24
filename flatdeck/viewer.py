@@ -25,6 +25,7 @@ def _poly_path(paths, closed=True) -> QPainterPath:
 
 class BoardView(QWidget):
     cursorMoved = Signal(float, float)
+    picked = Signal(float, float)           # click in pick mode: world coordinates
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -36,6 +37,7 @@ class BoardView(QWidget):
         self.scale = 8.0                        # px per mm
         self.centre = np.zeros(2)
         self.show_tool_width = True
+        self.pick_layer = None                  # when set, a click (without drag) emits `picked`
         self._cache: dict = {}
         self._drag = None
         self.empty_message = "Open a Gerber or Excellon file\n(or drag it here)"
@@ -98,6 +100,15 @@ class BoardView(QWidget):
                 p.setPen(Qt.NoPen)
                 p.setBrush(col)
                 p.drawPath(path)
+                if lay.hv_points:
+                    sel = self.project.hv_indices(lay)
+                    hv = self._cached(("hv", id(lay), id(lay.gerber.polys), tuple(sorted(sel))),
+                                      lambda l=lay, s=sel: _poly_path([q for i, isl in enumerate(l.islands()) if i in s for q in isl.paths()]))
+                    pen = QPen(QColor(theme.DANGER), 1.6)
+                    pen.setCosmetic(True)
+                    p.setPen(pen)
+                    p.setBrush(QColor(248, 113, 113, 150))
+                    p.drawPath(hv)
             elif lay.kind in ("silk", "mask"):
                 path = self._cached(("sm", id(lay), id(lay.gerber.polys)), lambda l=lay: _poly_path(l.gerber.polys))
                 p.setPen(Qt.NoPen)
@@ -162,6 +173,12 @@ class BoardView(QWidget):
             p.setBrush(Qt.NoBrush)
             p.drawPath(path)
             p.drawPath(open_path)
+        if job.marks:
+            pen = QPen(QColor(theme.DANGER), 1.6)
+            pen.setCosmetic(True)
+            p.setPen(pen)
+            p.setBrush(QColor(248, 113, 113, 190))
+            p.drawPath(self._cached(("marks", id(lay)), lambda: _poly_path(job.marks)))
         if job.holes:
             pen = QPen(col, 1.5)
             pen.setCosmetic(True)
@@ -210,6 +227,11 @@ class BoardView(QWidget):
         self.centre += (wx - nx, wy - ny)
         self.update()
 
+    def set_pick_layer(self, layer) -> None:
+        self.pick_layer = layer
+        self.setCursor(Qt.CrossCursor if layer is not None else Qt.ArrowCursor)
+        self.update()
+
     def mousePressEvent(self, ev) -> None:
         if ev.button() in (Qt.LeftButton, Qt.MiddleButton, Qt.RightButton):
             self._drag = (ev.position(), self.centre.copy())
@@ -225,7 +247,10 @@ class BoardView(QWidget):
             ox, oy = self.project.origin()
             self.cursorMoved.emit(wx - ox, wy - oy)
 
-    def mouseReleaseEvent(self, _ev) -> None:
+    def mouseReleaseEvent(self, ev) -> None:
+        if (self._drag is not None and self.pick_layer is not None and ev.button() == Qt.LeftButton
+                and (ev.position() - self._drag[0]).manhattanLength() < 4):
+            self.picked.emit(*self.to_world(ev.position().x(), ev.position().y()))
         self._drag = None
 
     def mouseDoubleClickEvent(self, _ev) -> None:

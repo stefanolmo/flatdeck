@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import cam, geom
+from . import cam, geom, islands
 from .excellon import DrillFile, parse_excellon
 from .gerber import GerberLayer, outline_loops, parse_gerber
 
@@ -27,6 +27,8 @@ class Layer:
     visible: bool = True
     path: str = ""
     side: str = "top"               # top | bottom (from the file extension or name)
+    hv_points: list = field(default_factory=list)       # one point inside every island marked high-voltage
+    _cache: dict = field(default_factory=dict, repr=False)
 
     def bounds(self):
         if self.gerber is not None:
@@ -34,6 +36,14 @@ class Layer:
         if self.drill is not None:
             return self.drill.bounds()
         return None
+
+    def islands(self) -> list:
+        if self.gerber is None:
+            return []
+        key = id(self.gerber.polys)
+        if self._cache.get("key") != key:
+            self._cache = {"key": key, "islands": islands.split(self.gerber.polys)}
+        return self._cache["islands"]
 
     @property
     def warnings(self) -> list:
@@ -139,6 +149,29 @@ class Project:
     def copper_paths(self, layer: Layer):
         return layer.gerber.polys
 
+    # ----- high-voltage islands
+    def hv_indices(self, layer: Layer) -> set:
+        isl = layer.islands()
+        found = {islands.find(isl, x, y) for x, y in layer.hv_points}
+        return {i for i in found if i is not None}
+
+    def toggle_hv(self, layer: Layer, x: float, y: float, tol: float = 0.0):
+        """Mark / unmark the island at (x, y). Returns True (marked), False (unmarked) or None (no island there)."""
+        isl = layer.islands()
+        i = islands.find(isl, x, y, tol)
+        if i is None:
+            return None
+        if i in self.hv_indices(layer):
+            layer.hv_points = [(px, py) for px, py in layer.hv_points if islands.find(isl, px, py) != i]
+            return False
+        layer.hv_points.append(islands.interior_point(isl[i], x, y))
+        return True
+
+    def hv_paths(self, layer: Layer, hv: bool) -> list:
+        """Contours of the HV islands (hv=True) or of all the others (hv=False)."""
+        sel = self.hv_indices(layer)
+        return [p for i, isl in enumerate(layer.islands()) if (i in sel) == hv for p in isl.paths()]
+
     # ----- transforms (all data layers together, so they stay registered)
     def _centre(self):
         b = self.board_bounds()
@@ -159,6 +192,8 @@ class Project:
                 g = l.gerber
                 g.polys = geom.union([fn(p) for p in g.polys]) if flips else [fn(p) for p in g.polys]
                 g.strokes = [(w, fn(s)) for w, s in g.strokes]
+                if l.hv_points:
+                    l.hv_points = [tuple(q) for q in fn(np.array(l.hv_points, dtype=float))]
             if l.drill is not None:
                 for t in l.drill.tools.values():
                     t.holes = fn(t.holes) if len(t.holes) else t.holes

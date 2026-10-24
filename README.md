@@ -36,12 +36,29 @@ Options: `--no-splash` (or `FLATDECK_NO_SPLASH=1`) skips the 3-second splash scr
 | Operation | What it does |
 |---|---|
 | Isolation | copper offset with `pyclipper`; multiple passes with overlap; outside / inside / both; flat end mill or **V-bit** (cutting width computed from tip, angle and depth); toolpaths ordered by proximity |
+| High voltage | wide copper-free band around selected copper islands (mains traces), cut with a large flat end mill (e.g. 2.5 or 3 mm) as a **separate job**; see below |
 | Drilling | one job per file, selectable tools sorted by diameter, **M0 pause at every bit change**, optional peck drilling, slots (G85 and routed) |
 | Cut-out | from the outline layer (closed profiles are chained, inner ones included) or from the data bounding box + margin; progressive depth passes; **tabs** (2 or 4) so the board does not come loose |
 | Transforms | mirror X/Y, rotate 90°, all applied to the whole project |
 
 G-code: only `G0 G1 G4 G21 G90 G94 M0 M2 M3 M5`, lines shorter than 80 characters, feed rate written only when it changes; the spindle starts
 with `M3 S…` (S = 0 to omit it). Z is zeroed **on the copper surface**: depths are always positive in the interface.
+
+## High-voltage clearance
+
+A Gerber has no net names, so you pick the **islands** instead: an island is the copper connected together on one layer (pads and
+traces of the same net). Open the **High voltage** tab, choose the copper layer, turn on *Pick islands in the view* and click the mains
+traces (click again to unmark). Marked islands turn red. Mark the same net again on the other layer.
+
+- *Clearance* is the width of the copper-free band measured from the edge of the HV copper; *Flat end mill Ø* is the bit used for it.
+  The first pass is tangent to the copper, further passes (with the chosen overlap) widen the band until it reaches the clearance.
+  With a 3 mm bit and a 3 mm clearance that is a single pass; the band can never be narrower than the bit (you get a warning).
+- It is a **separate job** with its own bit and depth: zero Z again after the tool change. In the *Isolation* tab, *Skip islands marked
+  high-voltage* (on by default) leaves those islands out of the fine isolation, so small traces keep their fine 0.2 mm isolation.
+- If other copper lies inside the band it would be milled away: the job shows it in red and warns you. Fix the layout or reduce the
+  clearance; FlatDeck does not move anything for you.
+- **Which clearance is safe for your voltage is up to you and the applicable standard; FlatDeck only cuts the number you type.**
+  A copper-free band is not a substitute for proper design of mains circuits.
 
 ## Limits of v1 (what is NOT there compared with FlatCAM)
 
@@ -70,8 +87,9 @@ Not tried (yet) with Gerber files from KiCad, Eagle or EasyEDA.
 flatdeck/geom.py        polygons on Clipper: union, difference, offset, round-pen strokes, path ordering
 flatdeck/gerber.py      RS-274X parser: apertures, macros, G74/G75 arcs, regions, polarity, step & repeat; outline chaining
 flatdeck/excellon.py    Excellon parser: units, format/zeros, holes, slots
-flatdeck/cam.py         isolation, drilling, cut-out -> G-code
-flatdeck/model.py       project: layers, transforms, origin, board outline (no Qt)
+flatdeck/cam.py         isolation, high-voltage clearance, drilling, cut-out -> G-code
+flatdeck/islands.py     connected copper islands, hit-testing (used to mark high-voltage copper)
+flatdeck/model.py       project: layers, transforms, origin, board outline, HV marks (no Qt)
 flatdeck/viewer.py      2D view (QPainter): pan, zoom, grid in mm from the origin
 flatdeck/mainwindow.py  main window      flatdeck/splash.py  splash screen
 ```

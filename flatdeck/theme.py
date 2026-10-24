@@ -106,7 +106,7 @@ QMessageBox {{ background: {CARD}; }}
 
 LAYER_COLORS = ["#d9822b", "#4aa8ff", "#a78bfa", "#34d399", "#f472b6", "#fbbf24"]
 DRILL_COLORS = ["#f1f5f9", "#fbbf24", "#34d399", "#60a5fa", "#f472b6", "#a78bfa", "#fb923c"]
-JOB_COLORS = {"isolation": ACCENT, "drill": OK, "cutout": WARN}
+JOB_COLORS = {"isolation": ACCENT, "drill": OK, "cutout": WARN, "hv": "#fb923c"}
 
 
 def _icon(draw, color: str = TEXT, size: int = 64) -> QIcon:

@@ -107,7 +107,10 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._iso_panel(), "Isolation")
         self.tabs.addTab(self._drill_panel(), "Drilling")
+        self._hv_tab = self._hv_panel()
+        self.tabs.addTab(self._hv_tab, "High voltage")
         self.tabs.addTab(self._cutout_panel(), "Cut-out")
+        self.tabs.currentChanged.connect(lambda *_: self._update_pick())
         lv.addWidget(self.tabs)
         lv.addStretch(1)
         sc = QScrollArea()
@@ -121,6 +124,7 @@ class MainWindow(QMainWindow):
         right = QSplitter(Qt.Vertical)
         right.setChildrenCollapsible(False)
         self.view = BoardView()
+        self.view.picked.connect(self._picked)
         self.view.cursorMoved.connect(lambda x, y: self.statusBar().showMessage(f"X {x:8.3f}   Y {y:8.3f}   mm from origin"))
         right.addWidget(self.view)
         bottom = QTabWidget()
@@ -206,7 +210,11 @@ class MainWindow(QMainWindow):
                        ("Plunge rate", self.iso_plunge), ("Spindle S", self.iso_spindle)])
         for w in (self.iso_tool, self.iso_dia, self.iso_tip, self.iso_angle, self.iso_depth):
             (w.currentIndexChanged if isinstance(w, QComboBox) else w.valueChanged).connect(lambda *_: self._iso_tool_changed())
+        self.iso_skip_hv = QCheckBox("Skip islands marked high-voltage")
+        self.iso_skip_hv.setChecked(True)
+        self.iso_skip_hv.setToolTip("Those islands are isolated by the wide band of the High voltage tab instead")
         c.body.addWidget(self.iso_mirror)
+        c.body.addWidget(self.iso_skip_hv)
         c.body.addWidget(self._gen_button("Generate isolation", self.gen_isolation))
         self._iso_tool_changed()
         return c
@@ -251,6 +259,84 @@ class MainWindow(QMainWindow):
         c.body.addWidget(n)
         c.body.addWidget(self._gen_button("Generate drilling", self.gen_drill))
         return c
+
+    def _hv_panel(self) -> QWidget:
+        c = Card("High-voltage clearance")
+        n = QLabel("Mark the copper islands that carry mains voltage; they get a wide copper-free band cut with a large flat end mill. "
+                   "An island is the copper connected together on one layer: mark the same net again on the other layer.")
+        n.setObjectName("muted")
+        n.setWordWrap(True)
+        c.body.addWidget(n)
+        self.hv_layer = QComboBox()
+        self.hv_layer.currentIndexChanged.connect(lambda *_: (self._update_pick(), self._hv_count()))
+        self.hv_pick = QPushButton("Pick islands in the view")
+        self.hv_pick.setCheckable(True)
+        self.hv_pick.setToolTip("Click an island to mark it, click it again to unmark it")
+        self.hv_pick.toggled.connect(lambda *_: self._update_pick())
+        clear = QPushButton("Clear marks")
+        clear.clicked.connect(self._hv_clear)
+        row = QHBoxLayout()
+        row.addWidget(self.hv_pick, 1)
+        row.addWidget(clear)
+        self.hv_count = QLabel("")
+        self.hv_count.setObjectName("muted")
+        self.hv_clear_w = self._field("hv_clearance", dspin(0.1, 50, 3.0, 1, " mm", 0.5))
+        self.hv_clear_w.setToolTip("Width of the copper-free band, measured from the edge of the HV copper")
+        self.hv_dia = self._field("hv_dia", dspin(0.5, 10, 3.0, 2, " mm", 0.5))
+        self.hv_overlap = self._field("hv_overlap", dspin(0, 90, 20, 0, " %"))
+        self.hv_depth = self._field("hv_depth", dspin(0.01, 5, 0.1, 3, " mm", 0.01))
+        self.hv_travel = self._field("hv_travel", dspin(0.5, 50, 2, 1, " mm"))
+        self.hv_feed = self._field("hv_feed", dspin(1, 5000, 100, 0, " mm/min"))
+        self.hv_plunge = self._field("hv_plunge", dspin(1, 2000, 40, 0, " mm/min"))
+        self.hv_spindle = self._field("hv_spindle", ispin(0, 30000, 1000))
+        self.hv_mirror = QCheckBox("Bottom side: mirror in X")
+        self._form(c, [("Copper layer", self.hv_layer)])
+        c.body.addLayout(row)
+        c.body.addWidget(self.hv_count)
+        self._form(c, [("Clearance", self.hv_clear_w), ("Flat end mill Ø", self.hv_dia), ("Overlap", self.hv_overlap),
+                       ("Depth", self.hv_depth), ("Safe Z", self.hv_travel), ("Feed rate", self.hv_feed),
+                       ("Plunge rate", self.hv_plunge), ("Spindle S", self.hv_spindle)])
+        c.body.addWidget(self.hv_mirror)
+        n2 = QLabel("Uses a different bit from the fine isolation: zero Z again after the tool change. "
+                    "Pick the clearance from the applicable standard for your voltage; the program does not check it.")
+        n2.setObjectName("muted")
+        n2.setWordWrap(True)
+        c.body.addWidget(n2)
+        c.body.addWidget(self._gen_button("Generate HV clearance", self.gen_hv))
+        return c
+
+    def _hv_layer(self):
+        return self.hv_layer.currentData()
+
+    def _update_pick(self) -> None:
+        on = self.hv_pick.isChecked() and self.tabs.currentWidget() is self._hv_tab and self._hv_layer() is not None
+        self.view.set_pick_layer(self._hv_layer() if on else None)
+
+    def _hv_count(self) -> None:
+        lay = self._hv_layer()
+        if lay is None:
+            self.hv_count.setText("No copper layer loaded.")
+        else:
+            self.hv_count.setText(f"{len(self.project.hv_indices(lay))} of {len(lay.islands())} islands marked")
+
+    def _picked(self, x: float, y: float) -> None:
+        lay = self._hv_layer()
+        if lay is None:
+            return
+        r = self.project.toggle_hv(lay, x, y, tol=6 / self.view.scale)
+        if r is None:
+            self.statusBar().showMessage("No copper island at that point", 3000)
+        self.view.update()
+        self._hv_count()
+        self._refresh_list_only()
+
+    def _hv_clear(self) -> None:
+        lay = self._hv_layer()
+        if lay is not None:
+            lay.hv_points = []
+            self.view.update()
+            self._hv_count()
+            self._refresh_list_only()
 
     def _cutout_panel(self) -> QWidget:
         c = Card("Board cut-out")
@@ -345,14 +431,14 @@ class MainWindow(QMainWindow):
         self.layer_list.blockSignals(True)
         self.layer_list.clear()
         for l in self.project.layers:
-            it = QListWidgetItem(f"{'⚙ ' if l.kind == 'job' else ''}{l.name}   ·   {KIND_LABEL[l.kind]}")
+            it = QListWidgetItem(self._item_text(l))
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(Qt.Checked if l.visible else Qt.Unchecked)
             self.layer_list.addItem(it)
         if cur in self.project.layers:
             self.layer_list.setCurrentRow(self.project.layers.index(cur))
         self.layer_list.blockSignals(False)
-        for combo, kinds in ((self.iso_layer, ("copper",)),):
+        for combo, kinds in ((self.iso_layer, ("copper",)), (self.hv_layer, ("copper",))):
             keep = combo.currentData()
             combo.clear()
             for l in self.project.layers:
@@ -371,6 +457,16 @@ class MainWindow(QMainWindow):
         self._fill_drill_tools()
         self._selection_changed()
         self._refresh_info()
+        self._hv_count()
+        self._update_pick()
+
+    def _item_text(self, l: Layer) -> str:
+        hv = f"   ·   {len(self.project.hv_indices(l))} HV" if l.kind == "copper" and l.hv_points else ""
+        return f"{'⚙ ' if l.kind == 'job' else ''}{l.name}   ·   {KIND_LABEL[l.kind]}{hv}"
+
+    def _refresh_list_only(self) -> None:
+        for i, l in enumerate(self.project.layers):
+            self.layer_list.item(i).setText(self._item_text(l))
 
     def _refresh_info(self) -> None:
         b = self.project.bounds()
@@ -476,7 +572,25 @@ class MainWindow(QMainWindow):
                                 feed=self.iso_feed.value(), plunge=self.iso_plunge.value(), spindle=self.iso_spindle.value(),
                                 mirror_x=self.project.mirror_axis() if self.iso_mirror.isChecked() else None)
         name = self._next_name(f"Isolation {lay.name}" + (" (mirrored)" if p.mirror_x is not None else ""))
-        self._run("iso", lambda: cam.isolate(lay.gerber.polys, p, self.project.origin(), name))
+        skip = self.iso_skip_hv.isChecked() and lay.hv_points
+        copper = self.project.hv_paths(lay, False) if skip else lay.gerber.polys
+        self._run("iso", lambda: cam.isolate(copper, p, self.project.origin(), name))
+
+    def gen_hv(self) -> None:
+        lay = self._hv_layer()
+        if lay is None:
+            QMessageBox.information(self, APP_NAME, "Load a copper layer.")
+            return
+        if not lay.hv_points:
+            QMessageBox.information(self, APP_NAME, "Mark at least one island: turn on \"Pick islands in the view\" and click the HV copper.")
+            return
+        p = cam.HVParams(clearance=self.hv_clear_w.value(), tool_dia=self.hv_dia.value(), overlap=self.hv_overlap.value() / 100,
+                         cut_z=-self.hv_depth.value(), travel_z=self.hv_travel.value(), feed=self.hv_feed.value(),
+                         plunge=self.hv_plunge.value(), spindle=self.hv_spindle.value(),
+                         mirror_x=self.project.mirror_axis() if self.hv_mirror.isChecked() else None)
+        name = self._next_name(f"HV clearance {lay.name}" + (" (mirrored)" if p.mirror_x is not None else ""))
+        hv, others = self.project.hv_paths(lay, True), self.project.hv_paths(lay, False)
+        self._run("hv", lambda: cam.hv_clearance(hv, others, p, self.project.origin(), name))
 
     def gen_drill(self) -> None:
         lay = self.dr_file.currentData()

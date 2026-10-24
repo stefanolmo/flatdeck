@@ -28,6 +28,7 @@ class CamResult:
     gcode: str = ""
     paths: list = field(default_factory=list)        # (array, closed) in world coordinates, for the preview
     holes: list = field(default_factory=list)        # (x, y, dia) in world coordinates
+    marks: list = field(default_factory=list)        # polygons to flag in the preview (copper the job would damage)
     tool_dia: float = 0.0
     warnings: list = field(default_factory=list)
     length: float = 0.0                              # cutting length, mm
@@ -50,6 +51,20 @@ class IsolationParams:
     plunge: float = 40.0
     spindle: int = 1000             # 0 = do not emit M3/M5
     mirror_x: float | None = None   # flip about the vertical line x = mirror_x (bottom side, board turned over)
+
+
+@dataclass
+class HVParams:
+    """Copper-free band around the high-voltage islands, cut with a large flat end mill."""
+    clearance: float = 3.0          # width of the band, measured from the HV copper edge
+    tool_dia: float = 3.0
+    overlap: float = 0.2
+    cut_z: float = -0.1
+    travel_z: float = 2.0
+    feed: float = 100.0
+    plunge: float = 40.0
+    spindle: int = 1000
+    mirror_x: float | None = None
 
 
 @dataclass
@@ -213,6 +228,59 @@ def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolatio
     w.end()
     if not n_loops:
         res.warnings.append("No toolpath generated")
+    res.gcode, res.length, res.time_s = w.text(), w.cut_len, w.time
+    return res
+
+
+# --------------------------------------------------------------------------- high-voltage clearance
+def hv_offsets(p: HVParams) -> list:
+    """Tool-centre distances from the HV copper edge: the first pass is tangent to it, the last one reaches `clearance`."""
+    step = p.tool_dia * (1 - p.overlap)
+    last = max(p.clearance - p.tool_dia / 2, p.tool_dia / 2)
+    offs = [p.tool_dia / 2]
+    while offs[-1] < last - 1e-9:
+        offs.append(min(offs[-1] + step, last))
+    return offs
+
+
+def hv_clearance(hv, others, p: HVParams, origin=(0.0, 0.0), name: str = "HV clearance") -> CamResult:
+    """`hv`: contours of the high-voltage islands; `others`: contours of all the remaining copper of the same layer."""
+    _check(len(hv) > 0, "No island is marked as high-voltage")
+    _check(p.clearance > 0 and p.tool_dia > 0, "Clearance and tool diameter must be positive")
+    _check(0 <= p.overlap < 1, "Overlap must be between 0 and 99%")
+    _check(p.cut_z < 0 and p.travel_z > 0, "Depth must be negative and safe Z positive")
+    _check(p.feed > 0 and p.plunge > 0, "Feed rates must be positive")
+    res = CamResult(kind="hv", name=name, tool_dia=p.tool_dia)
+    if p.clearance < p.tool_dia - 1e-9:
+        res.warnings.append(f"Clearance {p.clearance:g} mm is smaller than the tool: the band will be {p.tool_dia:g} mm wide")
+    base = geom.union(hv)
+    zone = geom.offset(base, max(p.clearance, p.tool_dia))
+    hit = geom.intersection(others, zone) if others else []
+    hit = [h for h in hit if abs(geom.area(h)) > 1e-4]
+    if hit:
+        res.marks = hit
+        res.warnings.append(f"{len(hit)} piece(s) of other copper lie within {max(p.clearance, p.tool_dia):g} mm of the HV islands "
+                            "and would be milled away (shown in red): move them or reduce the clearance")
+    offs = hv_offsets(p)
+    w = _Writer(origin, f"HV clearance {p.clearance:g} mm, tool {p.tool_dia:g} mm, {len(offs)} passes", p.spindle, p.travel_z)
+    w.start()
+    cur = np.asarray(origin, dtype=float)
+    for off in offs:
+        loops = geom.clean(geom.offset(base, off))
+        if p.mirror_x is not None:
+            loops = [_flip(l, p.mirror_x)[::-1] for l in loops]
+        for loop in geom.order_nearest(loops, cur):
+            w.lift()
+            w.rapid_xy(loop[0])
+            w.feed_z(p.cut_z, p.plunge)
+            for q in loop[1:]:
+                w.feed_xy(q, p.feed)
+            w.feed_xy(loop[0], p.feed)
+            cur = loop[0]
+            res.paths.append((loop, True))
+    w.end()
+    if p.mirror_x is not None:
+        res.marks = [_flip(m, p.mirror_x) for m in res.marks]
     res.gcode, res.length, res.time_s = w.text(), w.cut_len, w.time
     return res
 
