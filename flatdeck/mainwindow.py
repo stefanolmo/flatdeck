@@ -667,6 +667,13 @@ class MainWindow(QMainWindow):
                                 feed=self.iso_feed.value(), plunge=self.iso_plunge.value(), spindle=self.iso_spindle.value(),
                                 mirror_x=self.project.mirror_axis() if self.iso_mirror.isChecked() else None)
         name = self._next_name(f"Isolation {lay.name}" + (" (mirrored)" if p.mirror_x is not None else ""))
+        how = (f"V-bit {self.iso_angle.value():g}°, tip {self.iso_tip.value():g} mm, depth {self.iso_depth.value():g} mm"
+               if self.iso_tool.currentData() == "vbit" else f"flat end mill {self.iso_dia.value():g} mm")
+        if self.iso_measured.value() > 0:
+            how += f", measured width {self.iso_measured.value():g} mm"
+        self._log(f"Isolation settings: {how} -> cutting width {self._iso_eff:.3f} mm; toolpath "
+                  f"{self._iso_eff / 2 + self.iso_margin.value():.3f} mm from the copper edge (margin {self.iso_margin.value():g} mm), "
+                  f"{self.iso_passes.value()} pass(es)")
         skip = self.iso_skip_hv.isChecked() and lay.hv_points
         copper = self.project.hv_paths(lay, False) if skip else lay.gerber.polys
         self._run("iso", lambda: cam.isolate(copper, p, self.project.origin(), name))

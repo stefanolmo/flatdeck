@@ -199,3 +199,14 @@ def test_every_editable_parameter_has_a_tooltip(win):
     for lab, field in win._labels:                                      # labels repeat their field's tooltip
         assert field.toolTip() and lab.toolTip() == field.toolTip()
     assert all(b.toolTip() for b in win.findChildren(QPushButton))
+
+
+def test_isolation_logs_the_width_actually_used(win):
+    load_all(win)
+    win.iso_tool.setCurrentIndex(win.iso_tool.findData("vbit"))
+    win.iso_tip.setValue(0.0)
+    win.iso_angle.setValue(20)
+    win.iso_depth.setValue(0.2)
+    win.gen_isolation()
+    log = win.messages.toPlainText()
+    assert "V-bit 20°, tip 0 mm, depth 0.2 mm -> cutting width 0.071 mm" in log and "0.035 mm from the copper edge" in log
