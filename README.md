@@ -47,7 +47,7 @@ exactly (the real tip is often wider than declared, wear, runout, a Z zero sligh
 from the copper, so traces stay that much wider on each side; 0.02–0.05 mm is a typical start).
 
 **Narrow gaps.** Where two copper islands are closer than the tool diameter, the tool cannot pass between them without touching the
-copper. FlatDeck then separates the two grooves by letting the tool cut into the copper edges, only as much as needed and at most half
+copper. FlatDeck then separates the two grooves by letting the tool cut into the copper edges, only next to the gap, only as much as needed and at most half
 a tool radius, and says so in the Messages tab. Gaps narrower than the tool radius cannot be isolated at all: they are shown in red in
 the preview with a warning, and you need a smaller tool (or a V-bit at less depth) or a layout with more room.
 

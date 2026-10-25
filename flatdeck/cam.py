@@ -184,8 +184,9 @@ def _check(cond: bool, msg: str) -> None:
 # --------------------------------------------------------------------------- isolation
 def _split_merged(base, loops, r: float, rb: float, warnings: list | None, marks: list | None) -> list:
     """Where copper islands are closer than the tool diameter their offset loops fuse into one ring around all of them and
-    nothing is cut between them (a short circuit). Re-offset those clusters with a smaller radius, just enough to separate
-    the loops: the tool then cuts into the copper edges by up to r - r' instead of leaving the gap uncut.
+    nothing is cut between them (a short circuit). For each such cluster, find the smallest reduction of the offset (never below
+    r / 2) that separates the islands, then give every island its own loop and trim it only where it would come closer than that
+    to a neighbour: the tool cuts into the copper edges near the narrow gap and nowhere else.
     `r` is the tool radius, `rb` the first-pass offset (r + safety margin). Gaps narrower than the tool radius cannot be fixed
     this way and are reported."""
     cu = None
@@ -198,20 +199,20 @@ def _split_merged(base, loops, r: float, rb: float, warnings: list | None, marks
             out += f.paths()
             continue
         sub = [q for c in inside for q in c.paths()]
-        done = None
+        rp = None
         k = 0
-        while rb - k * 0.02 * r >= r / 2 - 1e-9:                 # shrink the offset, never below r / 2
+        while rb - (k + 1) * 0.02 * r >= r / 2 - 1e-9:           # shrink the offset, never below r / 2
             k += 1
-            rp = rb - k * 0.02 * r
-            if rp < r / 2 - 1e-9:
-                break
-            cand = geom.clean(geom.offset(sub, rp))
+            cand = geom.clean(geom.offset(sub, rb - k * 0.02 * r))
             if all(sum(1 for c in inside if g.contains(*c.outer[0])) <= 1 for g in islands.split(cand)):
-                done, nick = cand, max(nick, r - rp)
+                rp = rb - k * 0.02 * r
                 break
-        if done is not None:
-            out += done
+        if rp is not None:
+            for a in inside:
+                others = [q for b in inside if b is not a for q in b.paths()]
+                out += geom.clean(geom.difference(geom.offset(a.paths(), rb), geom.offset(others, rp)))
             fixed += 1
+            nick = max(nick, r - rp)
             continue
         out += f.paths()
         bad += 1
@@ -221,8 +222,8 @@ def _split_merged(base, loops, r: float, rb: float, warnings: list | None, marks
                     marks += [m for m in geom.intersection(geom.offset(a.paths(), r), geom.offset(b.paths(), r)) if abs(geom.area(m)) > 1e-5]
     if warnings is not None:
         if fixed:
-            how = (f"letting the tool cut up to {nick:.3f} mm into the copper edges" if nick > 1e-9
-                   else "reducing the safety margin there")
+            how = (f"letting the tool cut up to {nick:.3f} mm into the copper edges next to the gap" if nick > 1e-9
+                   else "reducing the safety margin next to the gap")
             warnings.append(f"{fixed} narrow gap(s) between copper islands isolated by {how}")
         if bad:
             warnings.append(f"{bad} gap(s) narrower than the tool radius could not be isolated and remain shorted (shown in red): "

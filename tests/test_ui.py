@@ -187,3 +187,15 @@ def test_sharp_vbit_tip_of_zero_is_allowed(win):
     win.iso_depth.setValue(0.1)
     assert win.iso_tip.value() == 0.0
     assert abs(win._iso_eff - 2 * 0.1 * math.tan(math.radians(10))) < 1e-6      # 0.0353 mm: only depth and angle
+
+
+def test_every_editable_parameter_has_a_tooltip(win):
+    from PySide6.QtWidgets import QAbstractSpinBox, QCheckBox, QComboBox, QLineEdit, QPushButton
+    widgets = [w for cls in (QAbstractSpinBox, QComboBox, QCheckBox) for w in win.findChildren(cls)]
+    missing = [(type(w).__name__, w.parent().__class__.__name__) for w in widgets
+               if not w.toolTip() and not isinstance(w.parent(), (QAbstractSpinBox, QComboBox))]   # skip the inner line edits
+    assert not missing, missing
+    assert len(win._labels) >= 30
+    for lab, field in win._labels:                                      # labels repeat their field's tooltip
+        assert field.toolTip() and lab.toolTip() == field.toolTip()
+    assert all(b.toolTip() for b in win.findChildren(QPushButton))

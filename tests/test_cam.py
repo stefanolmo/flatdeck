@@ -203,3 +203,23 @@ def test_margin_is_given_up_in_a_narrow_gap_before_cutting_copper():
     res = cam.isolate(pads, cam.IsolationParams(tool_dia=0.2, margin=0.05))
     assert len(res.paths) == 2 and not res.marks
     assert any("reducing the safety margin" in w for w in res.warnings)
+
+
+def test_narrow_gap_fix_is_local_the_rest_of_the_trace_keeps_its_full_width():
+    """Regression: the whole cluster used to be nicked, so a long trace far from the gap came out thinner than designed."""
+    pads = [geom.circle(0, 0, 0.5), geom.circle(1.15, 0, 0.5)]                # gap 0.15 mm < tool 0.2 mm
+    trace = geom.stroke(np.array([[0.0, 0.0], [0.0, -12.0]]), 0.4)
+    res = cam.isolate(geom.union(pads + trace), cam.IsolationParams(tool_dia=0.2))
+    assert any("narrow gap" in w for w in res.warnings) and not res.marks
+    pts = np.vstack([l for l, _ in res.paths])
+    far_end = pts[pts[:, 1] < -11.5]
+    assert np.allclose(np.abs(far_end[:, 0]).max(), 0.3, atol=1e-3)           # trace half-width 0.2 + tool radius 0.1
+    for centre in ((0, 0), (1.15, 0)):
+        assert _loops_enclosing(res, centre) == 1                              # and the pads are still separated
+    # every groove point stays at least r/2 from the copper of any island (the nick limit)
+    copper = geom.union(pads + trace)
+    near = geom.offset(copper, 0.05 - 1e-3)
+    import pyclipper
+    for p_ in pts:
+        c = [int(round(p_[0] * geom.SCALE)), int(round(p_[1] * geom.SCALE))]
+        assert not any(pyclipper.PointInPolygon(c, geom.to_c([q])[0]) == 1 for q in near if geom.area(q) > 0)

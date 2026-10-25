@@ -33,10 +33,13 @@ class MainWindow(QMainWindow):
         self.qs = QSettings("flatdeck", "flatdeck")
         self.project = Project()
         self._fields: dict = {}
+        self._form_rows: list = []
+        self._labels: list = []
         self._building = False
         self._build_toolbar()
         self._build_body()
         self.view.set_project(self.project)
+        self._set_tooltips()
         self.statusBar().showMessage("Ready. Open a Gerber or Excellon file.")
         self._refresh()
 
@@ -165,8 +168,11 @@ class MainWindow(QMainWindow):
     def _form(self, card: Card, rows: list) -> QGridLayout:
         g = QGridLayout()
         g.setColumnStretch(1, 1)
+        self._form_rows.append(rows)
         for i, (label, w) in enumerate(rows):
-            g.addWidget(QLabel(label), i, 0)
+            lab = QLabel(label)
+            self._labels.append((lab, w))
+            g.addWidget(lab, i, 0)
             g.addWidget(w, i, 1)
         card.body.addLayout(g)
         return g
@@ -375,6 +381,82 @@ class MainWindow(QMainWindow):
                        ("Feed rate", self.co_feed), ("Plunge rate", self.co_plunge), ("Spindle S", self.co_spindle)])
         c.body.addWidget(self._gen_button("Generate cut-out", self.gen_cutout))
         return c
+
+    def _set_tooltips(self) -> None:
+        """A tooltip on every editable parameter (and on its label)."""
+        tips = {
+            self.origin_combo: "Point of the board that becomes X0 Y0 in the G-code: zero the machine there.\n"
+                               "'Lower-left corner of the board' is the same on both sides of the board; 'Coordinates as in the files' keeps the CAD coordinates.",
+            self.layer_list: "Loaded files and generated jobs. The checkbox shows/hides a layer; right-click to change a layer's type.\n"
+                             "Select a job (⚙) to see its G-code and save it.",
+            # isolation
+            self.iso_layer: "Copper layer to isolate. Run it once per layer (top, bottom).",
+            self.iso_tool: "Flat end mill: the cutting width is its diameter.\nV-bit: the cutting width grows with depth (computed from tip, angle and depth).",
+            self.iso_dia: "Diameter of the flat end mill = width of the groove.",
+            self.iso_tip: self.iso_tip.toolTip(),
+            self.iso_angle: "Included angle of the V-bit (the manufacturer's value, e.g. 20°, 30°, 60°). Pick a common one or type your own.",
+            self.iso_measured: self.iso_measured.toolTip(),
+            self.iso_margin: self.iso_margin.toolTip(),
+            self.iso_eff: "Groove width used to place the toolpath. For a V-bit: tip + 2 × depth × tan(angle / 2), unless a measured width is given.",
+            self.iso_passes: "Number of concentric grooves around the copper. More passes = wider copper-free band (and more time).",
+            self.iso_overlap: "How much each pass overlaps the previous one, as a percentage of the cutting width. Only matters with more than one pass.",
+            self.iso_mode: "Outside and inside: both the outer edge of the copper and the holes inside copper areas.\nOutside only: skip the grooves inside copper pours.",
+            self.iso_depth: "How deep the bit goes below the copper surface (positive number; Z0 = copper surface).\n"
+                            "A V-bit cuts wider the deeper it goes. Copper is ~0.035 mm thick: 0.05–0.1 mm is usually enough.",
+            self.iso_travel: "Height above the copper surface for rapid moves between cuts. Must clear clamps and the work.",
+            self.iso_feed: "Cutting speed in the XY plane while milling the groove (mm/min).",
+            self.iso_plunge: "Speed of the vertical move down into the material (mm/min). Keep it lower than the cutting feed.",
+            self.iso_spindle: self.iso_spindle.toolTip(),
+            self.iso_mirror: self.iso_mirror.toolTip(),
+            self.iso_skip_hv: self.iso_skip_hv.toolTip(),
+            # drilling
+            self.dr_file: "Excellon drill file to use.",
+            self.dr_table: "Tick the bits you have fitted/want in this job. Bits are used from the smallest to the largest.\n"
+                           "Tick one bit at a time and generate several jobs if you prefer one file per bit.",
+            self.dr_depth: "Drilling depth below the copper surface (positive number). Board thickness plus ~0.2 mm to go through.",
+            self.dr_travel: "Height above the board for moves between holes.",
+            self.dr_change: "Height the spindle goes to before pausing (M0) for a bit change. Must be high enough to swap bits comfortably.",
+            self.dr_plunge: "Vertical drilling speed (mm/min). Small bits need slow plunges.",
+            self.dr_peck: self.dr_peck.toolTip(),
+            self.dr_spindle: "Spindle S value. 0 = do not emit M3/M5.",
+            self.dr_mirror: "Tick when drilling from the bottom side: hole positions are mirrored about the board's vertical axis.",
+            # high voltage
+            self.hv_layer: "Copper layer whose islands you mark as high-voltage.",
+            self.hv_pick: self.hv_pick.toolTip(),
+            self.hv_clear_w: self.hv_clear_w.toolTip(),
+            self.hv_dia: "Large flat end mill used to cut the band (e.g. 2.5 or 3 mm). It cannot cut a band narrower than itself.",
+            self.hv_overlap: "Overlap between adjacent passes when the band is wider than the bit, as a percentage of its diameter.",
+            self.hv_depth: "Depth below the copper surface (positive number). Just through the copper: ~0.1 mm.",
+            self.hv_travel: "Height above the copper surface for rapid moves.",
+            self.hv_feed: "Cutting speed in the XY plane (mm/min). A large bit can go slower than a fine one.",
+            self.hv_plunge: "Speed of the vertical move down (mm/min).",
+            self.hv_spindle: "Spindle S value. 0 = do not emit M3/M5.",
+            self.hv_mirror: "Tick for a bottom-side layer: the toolpath is mirrored about the board's vertical axis.",
+            # cut-out
+            self.co_margin: self.co_margin.toolTip(),
+            self.co_dia: "Diameter of the end mill that cuts the board out (e.g. 1 mm). The path runs outside the outline by its radius.",
+            self.co_depth: "Cut depth below the copper surface (positive number): board thickness + ~0.2 mm to go through.",
+            self.co_step: "Depth removed per pass. The cut is repeated until the full depth is reached.",
+            self.co_gaps: "Tabs keep the board attached to the stock while it is cut; snap or cut them afterwards.\n"
+                          "Left and right / top and bottom / one on every side.",
+            self.co_gapw: "Width of the material left uncut at each tab.",
+            self.co_travel: "Height above the board for rapid moves.",
+            self.co_feed: "Cutting speed in the XY plane (mm/min).",
+            self.co_plunge: "Speed of the vertical move down (mm/min).",
+            self.co_spindle: "Spindle S value. 0 = do not emit M3/M5.",
+        }
+        for w, t in tips.items():
+            w.setToolTip(t)
+        for lab, w in self._labels:
+            lab.setToolTip(w.toolTip())
+        for b in self.findChildren(QPushButton):
+            if not b.toolTip():
+                b.setToolTip({"Remove": "Remove the selected layer or job from the project",
+                              "Clear marks": "Unmark all high-voltage islands of this layer",
+                              "Generate isolation": "Create the G-code job that isolates the selected copper layer",
+                              "Generate drilling": "Create the G-code job that drills the selected holes",
+                              "Generate HV clearance": "Create the G-code job that cuts the wide band around the marked high-voltage islands",
+                              "Generate cut-out": "Create the G-code job that cuts the board out of the stock"}.get(b.text(), b.text()))
 
     # ------------------------------------------------------------------ project actions
     def open_files(self) -> None:
