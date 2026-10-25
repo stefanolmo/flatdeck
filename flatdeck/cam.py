@@ -45,6 +45,7 @@ class IsolationParams:
     passes: int = 1
     overlap: float = 0.2            # fraction of the tool diameter shared by adjacent passes
     mode: str = "all"               # all | ext | int
+    margin: float = 0.0             # extra distance between the copper edge and the groove (traces stay this much wider)
     cut_z: float = -0.05
     travel_z: float = 2.0
     feed: float = 120.0
@@ -181,11 +182,12 @@ def _check(cond: bool, msg: str) -> None:
 
 
 # --------------------------------------------------------------------------- isolation
-def _split_merged(base, loops, r: float, warnings: list | None, marks: list | None) -> list:
+def _split_merged(base, loops, r: float, rb: float, warnings: list | None, marks: list | None) -> list:
     """Where copper islands are closer than the tool diameter their offset loops fuse into one ring around all of them and
     nothing is cut between them (a short circuit). Re-offset those clusters with a smaller radius, just enough to separate
     the loops: the tool then cuts into the copper edges by up to r - r' instead of leaving the gap uncut.
-    Gaps narrower than the tool radius cannot be fixed this way and are reported."""
+    `r` is the tool radius, `rb` the first-pass offset (r + safety margin). Gaps narrower than the tool radius cannot be fixed
+    this way and are reported."""
     cu = None
     out, fixed, bad, nick = [], 0, 0, 0.0
     for f in islands.split(loops):
@@ -197,8 +199,12 @@ def _split_merged(base, loops, r: float, warnings: list | None, marks: list | No
             continue
         sub = [q for c in inside for q in c.paths()]
         done = None
-        for k in range(1, 26):                                   # down to r / 2
-            rp = r * (1 - 0.02 * k)
+        k = 0
+        while rb - k * 0.02 * r >= r / 2 - 1e-9:                 # shrink the offset, never below r / 2
+            k += 1
+            rp = rb - k * 0.02 * r
+            if rp < r / 2 - 1e-9:
+                break
             cand = geom.clean(geom.offset(sub, rp))
             if all(sum(1 for c in inside if g.contains(*c.outer[0])) <= 1 for g in islands.split(cand)):
                 done, nick = cand, max(nick, r - rp)
@@ -215,7 +221,9 @@ def _split_merged(base, loops, r: float, warnings: list | None, marks: list | No
                     marks += [m for m in geom.intersection(geom.offset(a.paths(), r), geom.offset(b.paths(), r)) if abs(geom.area(m)) > 1e-5]
     if warnings is not None:
         if fixed:
-            warnings.append(f"{fixed} narrow gap(s) between copper islands isolated by letting the tool cut up to {nick:.3f} mm into the copper edges")
+            how = (f"letting the tool cut up to {nick:.3f} mm into the copper edges" if nick > 1e-9
+                   else "reducing the safety margin there")
+            warnings.append(f"{fixed} narrow gap(s) between copper islands isolated by {how}")
         if bad:
             warnings.append(f"{bad} gap(s) narrower than the tool radius could not be isolated and remain shorted (shown in red): "
                             "use a smaller tool, or a V-bit at less depth")
@@ -227,13 +235,14 @@ def isolation_loops(copper, p: IsolationParams, warnings: list | None = None, ma
     _check(p.tool_dia > 0, "Tool diameter must be positive")
     _check(1 <= p.passes <= 50, "Passes must be between 1 and 50")
     _check(0 <= p.overlap < 1, "Overlap must be between 0 and 99%")
+    _check(0 <= p.margin <= 2, "Safety margin must be between 0 and 2 mm")
     base = geom.union(copper)
     step = p.tool_dia * (1 - p.overlap)
     out = []
     for i in range(p.passes):
-        loops = geom.offset(base, p.tool_dia / 2 + i * step)
+        loops = geom.offset(base, p.tool_dia / 2 + p.margin + i * step)
         if i == 0:
-            loops = _split_merged(base, loops, p.tool_dia / 2, warnings, marks)
+            loops = _split_merged(base, loops, p.tool_dia / 2, p.tool_dia / 2 + p.margin, warnings, marks)
         if p.mode == "ext":
             loops = [l for l in loops if geom.is_outer(l)]
         elif p.mode == "int":

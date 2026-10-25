@@ -185,3 +185,21 @@ def test_pad_inside_a_hole_of_another_island_is_not_confused():
     inner = [geom.circle(0, 0, 0.5)]
     res = cam.isolate(geom.union(ring + inner), cam.IsolationParams(tool_dia=0.2))
     assert not res.warnings and not res.marks and len(res.paths) == 3
+
+
+def test_safety_margin_moves_every_pass_outwards():
+    trace = geom.stroke(np.array([[0, 0], [10, 0.0]]), 0.4)
+    a = cam.isolate(trace, cam.IsolationParams(tool_dia=0.2, passes=2))
+    b = cam.isolate(trace, cam.IsolationParams(tool_dia=0.2, passes=2, margin=0.05))
+    ya = sorted(float(np.abs(l[:, 1]).max()) for l, _ in a.paths)
+    yb = sorted(float(np.abs(l[:, 1]).max()) for l, _ in b.paths)
+    assert np.allclose(np.array(yb) - np.array(ya), 0.05, atol=0.002)
+    with pytest.raises(ValueError):
+        cam.isolate(trace, cam.IsolationParams(margin=-0.1))
+
+
+def test_margin_is_given_up_in_a_narrow_gap_before_cutting_copper():
+    pads = [geom.circle(0, 0, 0.5), geom.circle(1.0 + 0.27, 0, 0.5)]       # gap 0.27: fits a 0.2 tool, but not tool + 2 x 0.05 margin
+    res = cam.isolate(pads, cam.IsolationParams(tool_dia=0.2, margin=0.05))
+    assert len(res.paths) == 2 and not res.marks
+    assert any("reducing the safety margin" in w for w in res.warnings)

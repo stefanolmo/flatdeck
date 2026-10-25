@@ -189,6 +189,13 @@ class MainWindow(QMainWindow):
         self.iso_angle = self._field("iso_angle", AngleBox(30))
         self.iso_eff = QLabel("")
         self.iso_eff.setObjectName("muted")
+        self.iso_measured = self._field("iso_measured", dspin(0, 5, 0, 3, " mm", 0.01))
+        self.iso_measured.setSpecialValueText("not used")
+        self.iso_measured.setToolTip("Width of a groove you actually measured with this bit at this depth (caliper / microscope).\n"
+                                     "If set, it replaces the computed cutting width: bits are rarely exactly as specified.")
+        self.iso_margin = self._field("iso_margin", dspin(0, 2, 0, 3, " mm", 0.01))
+        self.iso_margin.setToolTip("Extra distance between the copper edge and the groove: traces stay this much wider on each side.\n"
+                                   "Use it if traces come out thinner than the design.")
         self.iso_passes = self._field("iso_passes", ispin(1, 50, 1))
         self.iso_overlap = self._field("iso_overlap", dspin(0, 90, 20, 0, " %"))
         self.iso_mode = self._field("iso_mode", QComboBox())
@@ -204,11 +211,12 @@ class MainWindow(QMainWindow):
         self.iso_mirror.setToolTip("For the bottom copper: the board is turned over about its vertical axis.\n"
                                    "Zero X0 Y0 at the lower-left corner of the turned-over board.")
         self._form(c, [("Copper layer", self.iso_layer), ("Tool", self.iso_tool), ("Diameter", self.iso_dia),
-                       ("Bit: tip diameter", self.iso_tip), ("Bit: angle", self.iso_angle), ("Cutting width", self.iso_eff),
+                       ("Bit: tip diameter", self.iso_tip), ("Bit: angle", self.iso_angle), ("Measured width", self.iso_measured),
+                       ("Cutting width", self.iso_eff), ("Safety margin", self.iso_margin),
                        ("Passes", self.iso_passes), ("Overlap", self.iso_overlap), ("Isolate", self.iso_mode),
                        ("Depth", self.iso_depth), ("Safe Z", self.iso_travel), ("Feed rate", self.iso_feed),
                        ("Plunge rate", self.iso_plunge), ("Spindle S", self.iso_spindle)])
-        for w in (self.iso_tool, self.iso_dia, self.iso_tip, self.iso_angle, self.iso_depth):
+        for w in (self.iso_tool, self.iso_dia, self.iso_tip, self.iso_angle, self.iso_depth, self.iso_measured):
             (w.valueChanged if hasattr(w, "valueChanged") else w.currentIndexChanged).connect(lambda *_: self._iso_tool_changed())
         self.iso_skip_hv = QCheckBox("Skip islands marked high-voltage")
         self.iso_skip_hv.setChecked(True)
@@ -225,7 +233,10 @@ class MainWindow(QMainWindow):
         self.iso_tip.setEnabled(vbit)
         self.iso_angle.setEnabled(vbit)
         eff = cam.vbit_diameter(self.iso_tip.value(), self.iso_angle.value(), self.iso_depth.value()) if vbit else self.iso_dia.value()
-        self.iso_eff.setText(f"{eff:.3f} mm" + (" (at the given depth)" if vbit else ""))
+        note = " (at the given depth)" if vbit else ""
+        if self.iso_measured.value() > 0:
+            eff, note = self.iso_measured.value(), " (measured)"
+        self.iso_eff.setText(f"{eff:.3f} mm" + note)
         self._iso_eff = eff
 
     def _drill_panel(self) -> QWidget:
@@ -568,7 +579,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_NAME, "Load a copper layer.")
             return
         p = cam.IsolationParams(tool_dia=self._iso_eff, passes=self.iso_passes.value(), overlap=self.iso_overlap.value() / 100,
-                                mode=self.iso_mode.currentData(), cut_z=-self.iso_depth.value(), travel_z=self.iso_travel.value(),
+                                mode=self.iso_mode.currentData(), margin=self.iso_margin.value(), cut_z=-self.iso_depth.value(), travel_z=self.iso_travel.value(),
                                 feed=self.iso_feed.value(), plunge=self.iso_plunge.value(), spindle=self.iso_spindle.value(),
                                 mirror_x=self.project.mirror_axis() if self.iso_mirror.isChecked() else None)
         name = self._next_name(f"Isolation {lay.name}" + (" (mirrored)" if p.mirror_x is not None else ""))

@@ -159,3 +159,21 @@ def test_vbit_angle_presets_and_free_value(win):
     assert win.iso_angle.value() == 22.5 and abs(win._iso_eff - (0.1 + 0.2 * math.tan(math.radians(11.25)))) < 1e-4
     win.iso_angle.lineEdit().setText("abc")
     assert win.iso_angle.value() == 30                                      # invalid text falls back to 30
+
+
+def test_measured_width_overrides_computed_one_and_margin_is_passed(win):
+    load_all(win)
+    win.iso_tool.setCurrentIndex(win.iso_tool.findData("vbit"))
+    win.iso_tip.setValue(0.1)
+    win.iso_depth.setValue(0.2)
+    win.iso_angle.setValue(20)
+    assert abs(win._iso_eff - 0.171) < 1e-3
+    win.iso_measured.setValue(0.25)
+    assert win._iso_eff == 0.25 and "measured" in win.iso_eff.text()
+    win.iso_margin.setValue(0.03)
+    win.iso_layer.setCurrentIndex(0)
+    win.gen_isolation()
+    job = win.project.jobs()[-1].job
+    assert job.tool_dia == 0.25 and "Isolation" in job.gcode.splitlines()[0]
+    win.iso_measured.setValue(0)
+    assert abs(win._iso_eff - 0.171) < 1e-3
