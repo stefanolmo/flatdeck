@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
-from PySide6.QtWidgets import QDoubleSpinBox, QFrame, QLabel, QPlainTextEdit, QSpinBox, QVBoxLayout
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QDoubleValidator, QFont, QSyntaxHighlighter, QTextCharFormat
+from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QFrame, QLabel, QPlainTextEdit, QSpinBox, QVBoxLayout
 
 from . import theme
 
@@ -47,6 +47,35 @@ def ispin(lo: int, hi: int, val: int, suffix: str = "") -> QSpinBox:
         s.setSuffix(suffix)
     s.setKeyboardTracking(False)
     return s
+
+
+class AngleBox(QComboBox):
+    """V-bit included angle: pick a common value from the list or type any other (1-170 degrees)."""
+    valueChanged = Signal(float)
+    PRESETS = (10, 15, 20, 30, 45, 60, 90)
+
+    def __init__(self, value: float = 30.0, parent=None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.NoInsert)
+        self.lineEdit().setValidator(QDoubleValidator(1.0, 170.0, 1, self))
+        for a in self.PRESETS:
+            self.addItem(f"{a}°", float(a))
+        self.setToolTip("Included angle of the V-bit. Choose a common one or type your own value.")
+        self.setValue(value)
+        self.activated.connect(lambda *_: self.valueChanged.emit(self.value()))
+        self.lineEdit().editingFinished.connect(lambda: self.valueChanged.emit(self.value()))
+
+    def value(self) -> float:
+        try:
+            v = float(self.currentText().replace("°", "").replace(",", ".").strip())
+        except ValueError:
+            return float(self.PRESETS[3])
+        return min(max(v, 1.0), 170.0)
+
+    def setValue(self, v: float) -> None:
+        self.setCurrentText(f"{v:g}°")
+        self.valueChanged.emit(self.value())
 
 
 class GcodeHighlighter(QSyntaxHighlighter):

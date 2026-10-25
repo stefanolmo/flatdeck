@@ -141,3 +141,21 @@ def test_app_icon_file_loads(app):
     path = os.path.join(os.path.dirname(__file__), "..", "flatdeck", "flatdeck.svg")
     pm = QIcon(path).pixmap(64, 64)
     assert not pm.isNull() and pm.toImage().pixelColor(32, 8).alpha() > 0
+
+
+def test_vbit_angle_presets_and_free_value(win):
+    import math
+    win.iso_tool.setCurrentIndex(win.iso_tool.findData("vbit"))
+    assert win.iso_angle.isEnabled()
+    items = [win.iso_angle.itemText(i) for i in range(win.iso_angle.count())]
+    assert "20°" in items and "30°" in items
+    win.iso_tip.setValue(0.1)
+    win.iso_depth.setValue(0.1)
+    win.iso_angle.setCurrentIndex(items.index("20°"))
+    win.iso_angle.activated.emit(items.index("20°"))
+    assert win.iso_angle.value() == 20 and abs(win._iso_eff - (0.1 + 0.2 * math.tan(math.radians(10)))) < 1e-4
+    win.iso_angle.lineEdit().setText("22,5")                                # any other angle, typed
+    win.iso_angle.lineEdit().editingFinished.emit()
+    assert win.iso_angle.value() == 22.5 and abs(win._iso_eff - (0.1 + 0.2 * math.tan(math.radians(11.25)))) < 1e-4
+    win.iso_angle.lineEdit().setText("abc")
+    assert win.iso_angle.value() == 30                                      # invalid text falls back to 30

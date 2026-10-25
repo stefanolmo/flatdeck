@@ -35,7 +35,7 @@ Options: `--no-splash` (or `FLATDECK_NO_SPLASH=1`) skips the 3-second splash scr
 
 | Operation | What it does |
 |---|---|
-| Isolation | copper offset with `pyclipper`; multiple passes with overlap; outside / inside / both; flat end mill or **V-bit** (cutting width computed from tip, angle and depth); toolpaths ordered by proximity |
+| Isolation | copper offset with `pyclipper`; multiple passes with overlap; outside / inside / both; flat end mill or **V-bit** (angle chosen from 10°–90° presets or typed freely; cutting width computed from tip, angle and depth); toolpaths ordered by proximity |
 | High voltage | wide copper-free band around selected copper islands (mains traces), cut with a large flat end mill (e.g. 2.5 or 3 mm) as a **separate job**; see below |
 | Drilling | one job per file, selectable tools sorted by diameter, **M0 pause at every bit change**, optional peck drilling, slots (G85 and routed) |
 | Cut-out | from the outline layer (closed profiles are chained, inner ones included) or from the data bounding box + margin; progressive depth passes; **tabs** (2 or 4) so the board does not come loose |

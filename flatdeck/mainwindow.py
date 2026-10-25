@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, 
 from . import __version__, cam, theme
 from .model import Layer, Project
 from .viewer import BoardView
-from .widgets import Card, CodeView, dspin, ispin
+from .widgets import AngleBox, Card, CodeView, dspin, ispin
 
 APP_NAME = "FlatDeck"
 KIND_LABEL = {"copper": "Copper", "outline": "Outline", "silk": "Silkscreen", "mask": "Mask", "drill": "Drill", "job": "G-code"}
@@ -186,7 +186,7 @@ class MainWindow(QMainWindow):
         self.iso_tool.addItem("V-bit", "vbit")
         self.iso_dia = self._field("iso_dia", dspin(0.01, 10, 0.2, 3, " mm", 0.05))
         self.iso_tip = self._field("iso_tip", dspin(0.01, 5, 0.1, 3, " mm", 0.05))
-        self.iso_angle = self._field("iso_angle", dspin(5, 120, 30, 0, "°"))
+        self.iso_angle = self._field("iso_angle", AngleBox(30))
         self.iso_eff = QLabel("")
         self.iso_eff.setObjectName("muted")
         self.iso_passes = self._field("iso_passes", ispin(1, 50, 1))
@@ -209,7 +209,7 @@ class MainWindow(QMainWindow):
                        ("Depth", self.iso_depth), ("Safe Z", self.iso_travel), ("Feed rate", self.iso_feed),
                        ("Plunge rate", self.iso_plunge), ("Spindle S", self.iso_spindle)])
         for w in (self.iso_tool, self.iso_dia, self.iso_tip, self.iso_angle, self.iso_depth):
-            (w.currentIndexChanged if isinstance(w, QComboBox) else w.valueChanged).connect(lambda *_: self._iso_tool_changed())
+            (w.valueChanged if hasattr(w, "valueChanged") else w.currentIndexChanged).connect(lambda *_: self._iso_tool_changed())
         self.iso_skip_hv = QCheckBox("Skip islands marked high-voltage")
         self.iso_skip_hv.setChecked(True)
         self.iso_skip_hv.setToolTip("Those islands are isolated by the wide band of the High voltage tab instead")
