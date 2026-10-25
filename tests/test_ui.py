@@ -177,3 +177,13 @@ def test_measured_width_overrides_computed_one_and_margin_is_passed(win):
     assert job.tool_dia == 0.25 and "Isolation" in job.gcode.splitlines()[0]
     win.iso_measured.setValue(0)
     assert abs(win._iso_eff - 0.171) < 1e-3
+
+
+def test_sharp_vbit_tip_of_zero_is_allowed(win):
+    import math
+    win.iso_tool.setCurrentIndex(win.iso_tool.findData("vbit"))
+    win.iso_tip.setValue(0.0)
+    win.iso_angle.setValue(20)
+    win.iso_depth.setValue(0.1)
+    assert win.iso_tip.value() == 0.0
+    assert abs(win._iso_eff - 2 * 0.1 * math.tan(math.radians(10))) < 1e-6      # 0.0353 mm: only depth and angle

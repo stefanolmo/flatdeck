@@ -185,7 +185,9 @@ class MainWindow(QMainWindow):
         self.iso_tool.addItem("Flat end mill", "flat")
         self.iso_tool.addItem("V-bit", "vbit")
         self.iso_dia = self._field("iso_dia", dspin(0.01, 10, 0.2, 3, " mm", 0.05))
-        self.iso_tip = self._field("iso_tip", dspin(0.01, 5, 0.1, 3, " mm", 0.05))
+        self.iso_tip = self._field("iso_tip", dspin(0, 5, 0.1, 3, " mm", 0.05))
+        self.iso_tip.setToolTip("Width of the flat at the very end of the V-bit (as declared by the maker, e.g. 0.1 mm).\n"
+                                "0 = perfectly sharp point: the groove width then depends only on depth and angle.")
         self.iso_angle = self._field("iso_angle", AngleBox(30))
         self.iso_eff = QLabel("")
         self.iso_eff.setObjectName("muted")
