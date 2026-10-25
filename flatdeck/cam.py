@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pyclipper
 
-from . import __version__, geom
+from . import __version__, geom, islands
 from .excellon import DrillFile, DrillTool
 
 RAPID_RATE = 1000.0       # mm/min, only used for the time estimate
@@ -181,7 +181,48 @@ def _check(cond: bool, msg: str) -> None:
 
 
 # --------------------------------------------------------------------------- isolation
-def isolation_loops(copper, p: IsolationParams, warnings: list | None = None) -> list:
+def _split_merged(base, loops, r: float, warnings: list | None, marks: list | None) -> list:
+    """Where copper islands are closer than the tool diameter their offset loops fuse into one ring around all of them and
+    nothing is cut between them (a short circuit). Re-offset those clusters with a smaller radius, just enough to separate
+    the loops: the tool then cuts into the copper edges by up to r - r' instead of leaving the gap uncut.
+    Gaps narrower than the tool radius cannot be fixed this way and are reported."""
+    cu = None
+    out, fixed, bad, nick = [], 0, 0, 0.0
+    for f in islands.split(loops):
+        if cu is None:
+            cu = islands.split(base)
+        inside = [c for c in cu if f.contains(*c.outer[0])]
+        if len(inside) < 2:
+            out += f.paths()
+            continue
+        sub = [q for c in inside for q in c.paths()]
+        done = None
+        for k in range(1, 26):                                   # down to r / 2
+            rp = r * (1 - 0.02 * k)
+            cand = geom.clean(geom.offset(sub, rp))
+            if all(sum(1 for c in inside if g.contains(*c.outer[0])) <= 1 for g in islands.split(cand)):
+                done, nick = cand, max(nick, r - rp)
+                break
+        if done is not None:
+            out += done
+            fixed += 1
+            continue
+        out += f.paths()
+        bad += 1
+        if marks is not None:
+            for i, a in enumerate(inside):
+                for b in inside[i + 1:]:
+                    marks += [m for m in geom.intersection(geom.offset(a.paths(), r), geom.offset(b.paths(), r)) if abs(geom.area(m)) > 1e-5]
+    if warnings is not None:
+        if fixed:
+            warnings.append(f"{fixed} narrow gap(s) between copper islands isolated by letting the tool cut up to {nick:.3f} mm into the copper edges")
+        if bad:
+            warnings.append(f"{bad} gap(s) narrower than the tool radius could not be isolated and remain shorted (shown in red): "
+                            "use a smaller tool, or a V-bit at less depth")
+    return out
+
+
+def isolation_loops(copper, p: IsolationParams, warnings: list | None = None, marks: list | None = None) -> list:
     """Closed tool-centre loops around the copper, one set per pass, innermost pass first."""
     _check(p.tool_dia > 0, "Tool diameter must be positive")
     _check(1 <= p.passes <= 50, "Passes must be between 1 and 50")
@@ -191,6 +232,8 @@ def isolation_loops(copper, p: IsolationParams, warnings: list | None = None) ->
     out = []
     for i in range(p.passes):
         loops = geom.offset(base, p.tool_dia / 2 + i * step)
+        if i == 0:
+            loops = _split_merged(base, loops, p.tool_dia / 2, warnings, marks)
         if p.mode == "ext":
             loops = [l for l in loops if geom.is_outer(l)]
         elif p.mode == "int":
@@ -209,7 +252,7 @@ def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolatio
     _check(p.travel_z > 0, "Safe Z must be positive")
     _check(p.feed > 0 and p.plunge > 0, "Feed rates must be positive")
     res = CamResult(kind="isolation", name=name, tool_dia=p.tool_dia)
-    passes = isolation_loops(copper, p, res.warnings)
+    passes = isolation_loops(copper, p, res.warnings, res.marks)
     w = _Writer(origin, f"Isolation, tool {p.tool_dia:g} mm, {p.passes} passes", p.spindle, p.travel_z)
     w.start()
     cur = np.asarray(origin, dtype=float)
@@ -226,6 +269,8 @@ def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolatio
             res.paths.append((loop, True))
             n_loops += 1
     w.end()
+    if p.mirror_x is not None:
+        res.marks = [_flip(m, p.mirror_x) for m in res.marks]
     if not n_loops:
         res.warnings.append("No toolpath generated")
     res.gcode, res.length, res.time_s = w.text(), w.cut_len, w.time

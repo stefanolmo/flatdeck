@@ -41,6 +41,11 @@ Options: `--no-splash` (or `FLATDECK_NO_SPLASH=1`) skips the 3-second splash scr
 | Cut-out | from the outline layer (closed profiles are chained, inner ones included) or from the data bounding box + margin; progressive depth passes; **tabs** (2 or 4) so the board does not come loose |
 | Transforms | mirror X/Y, rotate 90°, all applied to the whole project |
 
+**Narrow gaps.** Where two copper islands are closer than the tool diameter, the tool cannot pass between them without touching the
+copper. FlatDeck then separates the two grooves by letting the tool cut into the copper edges, only as much as needed and at most half
+a tool radius, and says so in the Messages tab. Gaps narrower than the tool radius cannot be isolated at all: they are shown in red in
+the preview with a warning, and you need a smaller tool (or a V-bit at less depth) or a layout with more room.
+
 G-code: only `G0 G1 G4 G21 G90 G94 M0 M2 M3 M5`, lines shorter than 80 characters, feed rate written only when it changes; the spindle starts
 with `M3 S…` (S = 0 to omit it). Z is zeroed **on the copper surface**: depths are always positive in the interface.
 

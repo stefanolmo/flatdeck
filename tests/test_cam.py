@@ -142,3 +142,46 @@ def test_every_generated_line_is_plain_grbl():
         for line in prog.splitlines():
             assert len(line) < 80 and ok.match(line), line
         assert prog.splitlines()[-1] == "M2"
+
+
+def _two_pads(gap, d=1.0):
+    return [geom.circle(0, 0, d / 2), geom.circle(d + gap, 0, d / 2)]
+
+
+def _loops_enclosing(res, pt):
+    import pyclipper
+    c = [int(round(pt[0] * geom.SCALE)), int(round(pt[1] * geom.SCALE))]
+    return sum(1 for l, _ in res.paths if pyclipper.PointInPolygon(c, geom.to_c([l])[0]) != 0)
+
+
+def test_wide_gap_needs_no_fix():
+    res = cam.isolate(_two_pads(0.3), cam.IsolationParams(tool_dia=0.2))
+    assert len(res.paths) == 2 and not res.warnings and not res.marks
+
+
+def test_gap_narrower_than_tool_is_still_separated():
+    """Gap 0.15 < tool 0.2: the offset loops used to fuse into one ring and nothing was cut between the pads (short circuit)."""
+    res = cam.isolate(_two_pads(0.15), cam.IsolationParams(tool_dia=0.2))
+    assert len(res.paths) == 2 and not res.marks
+    for pad_centre in ((0, 0), (1.15, 0)):
+        assert _loops_enclosing(res, pad_centre) == 1                    # each pad has its own groove
+    assert any("narrow gap" in w for w in res.warnings)
+    # the groove between the pads lies on the gap midline: it never cuts more than r/2 into either pad
+    allp = np.vstack([l for l, _ in res.paths])
+    mid = allp[(allp[:, 0] > 0.5) & (allp[:, 0] < 0.65)]
+    assert len(mid) and np.all(np.abs(mid[:, 0] - 0.575) < 0.07)
+
+
+def test_gap_smaller_than_tool_radius_is_reported_not_hidden():
+    res = cam.isolate(_two_pads(0.06), cam.IsolationParams(tool_dia=0.2))
+    assert len(res.paths) == 1 and res.marks
+    assert any("could not be isolated" in w for w in res.warnings)
+    flipped = cam.isolate(_two_pads(0.06), cam.IsolationParams(tool_dia=0.2, mirror_x=0.0))
+    assert abs(np.vstack(flipped.marks)[:, 0].mean() + np.vstack(res.marks)[:, 0].mean()) < 1e-6
+
+
+def test_pad_inside_a_hole_of_another_island_is_not_confused():
+    ring = geom.difference([geom.circle(0, 0, 3.0)], [geom.circle(0, 0, 2.0)])
+    inner = [geom.circle(0, 0, 0.5)]
+    res = cam.isolate(geom.union(ring + inner), cam.IsolationParams(tool_dia=0.2))
+    assert not res.warnings and not res.marks and len(res.paths) == 3
