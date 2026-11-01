@@ -29,6 +29,7 @@ class CamResult:
     paths: list = field(default_factory=list)        # (array, closed) in world coordinates, for the preview
     holes: list = field(default_factory=list)        # (x, y, dia) in world coordinates
     marks: list = field(default_factory=list)        # polygons to flag in the preview (copper the job would damage)
+    origin: tuple = (0.0, 0.0)                       # world point written as X0 Y0 (jobs only line up if they share it)
     tool_dia: float = 0.0
     warnings: list = field(default_factory=list)
     length: float = 0.0                              # cutting length, mm
@@ -160,7 +161,7 @@ class _Writer:
         self.pos[:2] = q
 
     def end(self) -> None:
-        self.rapid_z(self.travel)
+        self.lift()
         if self.spindle > 0:
             self.raw("M5")
         self.raw(f"G0 X0 Y0")
@@ -261,7 +262,7 @@ def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolatio
     _check(p.cut_z < 0, "Cutting depth must be negative")
     _check(p.travel_z > 0, "Safe Z must be positive")
     _check(p.feed > 0 and p.plunge > 0, "Feed rates must be positive")
-    res = CamResult(kind="isolation", name=name, tool_dia=p.tool_dia)
+    res = CamResult(kind="isolation", origin=(float(origin[0]), float(origin[1])), name=name, tool_dia=p.tool_dia)
     passes = isolation_loops(copper, p, res.warnings, res.marks)
     w = _Writer(origin, f"Isolation, tool {p.tool_dia:g} mm, {p.passes} passes", p.spindle, p.travel_z)
     w.start()
@@ -305,7 +306,7 @@ def hv_clearance(hv, others, p: HVParams, origin=(0.0, 0.0), name: str = "HV cle
     _check(0 <= p.overlap < 1, "Overlap must be between 0 and 99%")
     _check(p.cut_z < 0 and p.travel_z > 0, "Depth must be negative and safe Z positive")
     _check(p.feed > 0 and p.plunge > 0, "Feed rates must be positive")
-    res = CamResult(kind="hv", name=name, tool_dia=p.tool_dia)
+    res = CamResult(kind="hv", origin=(float(origin[0]), float(origin[1])), name=name, tool_dia=p.tool_dia)
     if p.clearance < p.tool_dia - 1e-9:
         res.warnings.append(f"Clearance {p.clearance:g} mm is smaller than the tool: the band will be {p.tool_dia:g} mm wide")
     base = geom.union(hv)
@@ -345,7 +346,7 @@ def drill(df: DrillFile, p: DrillParams, origin=(0.0, 0.0), name: str = "Drillin
     _check(p.drill_z < 0, "Drilling depth must be negative")
     _check(p.travel_z > 0 and p.change_z >= p.travel_z, "Safe Z must be > 0 and tool-change Z ≥ safe Z")
     _check(p.plunge > 0 and p.feed > 0, "Feed rates must be positive")
-    res = CamResult(kind="drill", name=name)
+    res = CamResult(kind="drill", origin=(float(origin[0]), float(origin[1])), name=name)
     w = _Writer(origin, "Drilling", p.spindle, p.travel_z)
     chosen = [t for t in sorted(df.tools.values(), key=lambda t: t.dia) if p.tools.get(t.number, True)]
     if p.mirror_x is not None:
@@ -353,7 +354,6 @@ def drill(df: DrillFile, p: DrillParams, origin=(0.0, 0.0), name: str = "Drillin
                             [_flip(s, p.mirror_x) for s in t.slots]) for t in chosen]
     if not chosen:
         raise ValueError("No tool selected")
-    w.raw(f"G0 Z{w.n(p.change_z)}")
     cur = np.asarray(origin, dtype=float)
     for k, t in enumerate(chosen):
         if k > 0:
@@ -451,7 +451,7 @@ def cutout(outer, inner, p: CutoutParams, origin=(0.0, 0.0), name: str = "Cut-ou
     _check(p.tool_dia > 0, "Tool diameter must be positive")
     _check(p.cut_z < 0 and p.step > 0, "Depth must be negative and step-down positive")
     _check(p.feed > 0 and p.plunge > 0, "Feed rates must be positive")
-    res = CamResult(kind="cutout", name=name, tool_dia=p.tool_dia)
+    res = CamResult(kind="cutout", origin=(float(origin[0]), float(origin[1])), name=name, tool_dia=p.tool_dia)
     r = p.tool_dia / 2
     loops = []                                         # (loop, gap_centres, is_board_outline)
     o = np.asarray(outer, dtype=float)

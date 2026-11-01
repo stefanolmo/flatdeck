@@ -27,6 +27,7 @@ class Layer:
     visible: bool = True
     path: str = ""
     side: str = "top"               # top | bottom (from the file extension or name)
+    regen: object = None            # job only: callable that generates it again with the current origin
     hv_points: list = field(default_factory=list)       # one point inside every island marked high-voltage
     _cache: dict = field(default_factory=dict, repr=False)
 
@@ -110,6 +111,14 @@ class Project:
 
     def jobs(self) -> list:
         return [l for l in self.layers if l.kind == "job"]
+
+    def stale_jobs(self) -> list:
+        """Jobs generated with an origin that is no longer the project's: they do not line up with newer ones."""
+        ox, oy = self.origin()
+        return [l for l in self.jobs() if abs(l.job.origin[0] - ox) > 1e-6 or abs(l.job.origin[1] - oy) > 1e-6]
+
+    def has_outline(self) -> bool:
+        return any(l.kind == "outline" and l.gerber is not None and l.gerber.strokes for l in self.data_layers())
 
     def add_job(self, res: cam.CamResult) -> Layer:
         lay = Layer(res.name, "job", job=res)

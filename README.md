@@ -29,6 +29,9 @@ Options: `--no-splash` (or `FLATDECK_NO_SPLASH=1`) skips the 3-second splash scr
    (The *Mirror X/Y* and *Rotate* toolbar buttons, on the other hand, transform the whole project.)
 3. The G-code **origin** is the lower-left corner of the **board outline** (or of the data, if there is no outline), identical on both
    sides: it is the point to zero on the machine (X0 Y0), before and after turning the board over.
+   **Load the outline file too**: without it the origin follows the copper and drill data, so it moves when you add or remove layers.
+   Every job remembers the origin it was generated with; jobs that no longer match the current one are marked *⚠ old origin*, FlatDeck
+   warns when you save them, and *Regenerate jobs with the old origin* (Project card) rebuilds them with the same settings.
 4. In the **Isolation / Drilling / Cut-out** tabs set the parameters (they are remembered) and press *Generate*: every job appears in the
    layer list with a toolpath preview (the pale band is the tool width) and its G-code at the bottom.
 5. **Save G-code…** saves the selected job.

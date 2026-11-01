@@ -105,6 +105,12 @@ class MainWindow(QMainWindow):
         self.info.setObjectName("muted")
         self.info.setWordWrap(True)
         c.body.addWidget(self.info)
+        self.regen_btn = QPushButton("Regenerate jobs with the old origin")
+        self.regen_btn.setToolTip("Some jobs were generated with a different origin than the current one, so they do not line up with the others.\n"
+                                  "This generates them again, with the same settings, using the current origin.")
+        self.regen_btn.clicked.connect(self.regenerate_stale)
+        self.regen_btn.setVisible(False)
+        c.body.addWidget(self.regen_btn)
         lv.addWidget(c)
 
         self.tabs = QTabWidget()
@@ -477,6 +483,7 @@ class MainWindow(QMainWindow):
         for w in lay.warnings:
             self._log(f"  ⚠ {w}")
         self._refresh()
+        self._warn_stale()
         self.layer_list.setCurrentRow(len(self.project.layers) - 1)
         self.view.fit()
 
@@ -486,6 +493,7 @@ class MainWindow(QMainWindow):
             self.project.remove(lay)
             self.view.invalidate()
             self._refresh()
+            self._warn_stale()
 
     def transform(self, op: str) -> None:
         if not self.project.data_layers():
@@ -510,6 +518,29 @@ class MainWindow(QMainWindow):
                 return
             self.project.layers = [l for l in self.project.layers if l.kind != "job"]
         self.project.origin_mode = mode
+        self.view.invalidate()
+        self._refresh()
+
+    def _warn_stale(self) -> None:
+        stale = self.project.stale_jobs()
+        if stale:
+            ox, oy = self.project.origin()
+            self._log(f"⚠ The origin moved to X {ox:.3f} Y {oy:.3f}: {len(stale)} job(s) were generated with another origin and do not line up "
+                      f"with new ones ({', '.join(l.name for l in stale)}). Use 'Regenerate jobs with the old origin'.")
+            self.statusBar().showMessage("Origin changed: some jobs are outdated", 8000)
+
+    def regenerate_stale(self) -> None:
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for lay in self.project.stale_jobs():
+                if lay.regen is None:
+                    continue
+                lay.job = lay.regen()
+                self._log(f"Regenerated {lay.name} with origin X {lay.job.origin[0]:.3f} Y {lay.job.origin[1]:.3f}")
+        except ValueError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+        finally:
+            QApplication.restoreOverrideCursor()
         self.view.invalidate()
         self._refresh()
 
@@ -554,9 +585,12 @@ class MainWindow(QMainWindow):
         self._refresh_info()
         self._hv_count()
         self._update_pick()
+        self.regen_btn.setVisible(bool(self.project.stale_jobs()))
 
     def _item_text(self, l: Layer) -> str:
         hv = f"   ·   {len(self.project.hv_indices(l))} HV" if l.kind == "copper" and l.hv_points else ""
+        if l.kind == "job" and l in self.project.stale_jobs():
+            hv = "   ·   ⚠ old origin"
         return f"{'⚙ ' if l.kind == 'job' else ''}{l.name}   ·   {KIND_LABEL[l.kind]}{hv}"
 
     def _refresh_list_only(self) -> None:
@@ -571,8 +605,12 @@ class MainWindow(QMainWindow):
             ox, oy = self.project.origin()
             holes = sum(l.drill.hole_count() for l in self.project.layers if l.drill)
             bb = self.project.board_bounds()
+            note = ""
+            if self.project.origin_mode == "board" and not self.project.has_outline():
+                note = ("\nNo outline layer: the origin follows the copper and drill data and moves when layers are added or removed. "
+                        "Load the outline file to fix it to the board corner.")
             self.info.setText(f"Board: {bb[2] - bb[0]:.2f} × {bb[3] - bb[1]:.2f} mm · holes: {holes}\n"
-                              f"Origin in the file: X {ox:.3f}  Y {oy:.3f}")
+                              f"Origin in the file: X {ox:.3f}  Y {oy:.3f}{note}")
         try:
             outer, inner, note = self.project.board_outline(self.co_margin.value())
             self.co_note.setText(note or f"Outline from layer: {1 + len(inner)} profiles ({len(inner)} inner)")
@@ -649,6 +687,7 @@ class MainWindow(QMainWindow):
             return
         QApplication.restoreOverrideCursor()
         lay = self.project.add_job(res)
+        lay.regen = fn
         self._refresh()
         self.layer_list.setCurrentRow(self.project.layers.index(lay))
         self._log(f"Generated {res.name}: {res.lines} lines, time ~{fmt_time(res.time_s)}")
@@ -708,12 +747,14 @@ class MainWindow(QMainWindow):
         self._run("drill", lambda: cam.drill(lay.drill, p, self.project.origin(), name))
 
     def gen_cutout(self) -> None:
+        name = self._next_name("Cut-out")
+
         def go():
             outer, inner, note = self.project.board_outline(self.co_margin.value())
             p = cam.CutoutParams(tool_dia=self.co_dia.value(), cut_z=-self.co_depth.value(), step=self.co_step.value(),
                                  travel_z=self.co_travel.value(), feed=self.co_feed.value(), plunge=self.co_plunge.value(),
                                  gaps=self.co_gaps.currentData(), gap_width=self.co_gapw.value(), spindle=self.co_spindle.value())
-            res = cam.cutout(outer, inner, p, self.project.origin(), self._next_name("Cut-out"))
+            res = cam.cutout(outer, inner, p, self.project.origin(), name)
             if note:
                 res.warnings.append(note)
             return res
@@ -722,6 +763,10 @@ class MainWindow(QMainWindow):
     def save_gcode(self) -> None:
         lay = self._current()
         if lay is None or lay.kind != "job":
+            return
+        if lay in self.project.stale_jobs() and QMessageBox.question(
+                self, APP_NAME, "This job was generated with a different origin than the current one, so it will not line up with the "
+                                "other jobs. Regenerate it first (button in the Project card). Save it anyway?") != QMessageBox.Yes:
             return
         last = self.qs.value("save_dir", os.path.expanduser("~"))
         safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in lay.name)

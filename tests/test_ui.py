@@ -210,3 +210,50 @@ def test_isolation_logs_the_width_actually_used(win):
     win.gen_isolation()
     log = win.messages.toPlainText()
     assert "V-bit 20°, tip 0 mm, depth 0.2 mm -> cutting width 0.071 mm" in log and "0.035 mm from the copper edge" in log
+
+
+def _gcode_xy(gcode):
+    import re
+    import numpy as np
+    return np.array([(float(m.group(1)), float(m.group(2))) for l in gcode.splitlines()
+                     for m in [re.match(r"G[01] X(-?[\d.]+) Y(-?[\d.]+)", l)] if m])
+
+
+def test_load_order_cannot_misalign_jobs_silently(win, monkeypatch, tmp_path):
+    """Regression: drill job generated before the copper was loaded had another X0 Y0 than the isolation job."""
+    import numpy as np
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    for f in ("TrafficLight_drill.txt",):
+        win.load_file(os.path.join(EX, f))
+    win.gen_drill()                                                   # origin = bounds of the holes only
+    drill_job = win.project.jobs()[0]
+    o_old = drill_job.job.origin
+    win.load_file(os.path.join(EX, "TrafficLight_copperBottom.gbl"))  # pads stick out beyond the holes: the origin moves
+    assert win.project.origin() != o_old
+    assert win.project.stale_jobs() == [drill_job] and "old origin" in win.layer_list.item(1).text()
+    assert win.regen_btn.isVisibleTo(win) and "origin moved" in win.messages.toPlainText()
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a[2]) or QMessageBox.No)
+    win.layer_list.setCurrentRow(1)
+    win.save_gcode()                                                  # refuses to save a misaligned job without confirmation
+    assert asked and "different origin" in asked[0]
+    win.iso_layer.setCurrentIndex(0)
+    win.gen_isolation()
+    win.regenerate_stale()
+    assert not win.project.stale_jobs() and not win.regen_btn.isVisibleTo(win)
+    drill, iso = win.project.jobs()[0].job, win.project.jobs()[1].job
+    assert drill.origin == iso.origin == win.project.origin()
+    # after regeneration the drill holes are where they are in the Gerber: gcode + origin = world position of the pads
+    world = _gcode_xy(drill.gcode) + np.array(drill.origin)
+    copper = next(l for l in win.project.layers if l.kind == "copper").islands()
+    holes = [h for h in world if any(isl.contains(*h) for isl in copper)]
+    assert len({tuple(np.round(h, 2)) for h in holes}) >= 50
+
+
+def test_outline_layer_pins_the_origin(win):
+    win.load_file(os.path.join(EX, "TrafficLight_contour.gm1"))
+    o = win.project.origin()
+    win.load_file(os.path.join(EX, "TrafficLight_drill.txt"))
+    win.load_file(os.path.join(EX, "TrafficLight_copperBottom.gbl"))
+    assert win.project.origin() == o and not win.project.stale_jobs()
+    assert "No outline layer" not in win.info.text()
