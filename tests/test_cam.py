@@ -223,3 +223,13 @@ def test_narrow_gap_fix_is_local_the_rest_of_the_trace_keeps_its_full_width():
     for p_ in pts:
         c = [int(round(p_[0] * geom.SCALE)), int(round(p_[1] * geom.SCALE))]
         assert not any(pyclipper.PointInPolygon(c, geom.to_c([q])[0]) == 1 for q in near if geom.area(q) > 0)
+
+
+def test_header_states_origin_and_mirror_so_two_files_can_be_compared():
+    d = parse_excellon(open("examples/TrafficLight_drill.txt").read())
+    g = parse_gerber(PADS)
+    a = cam.drill(d, cam.DrillParams(), origin=(18.199, 5.944)).gcode.splitlines()
+    b = cam.isolate(g.polys, cam.IsolationParams(mirror_x=40.0), origin=(16.705, 4.449)).gcode.splitlines()
+    assert a[1] == "(X0 Y0 = X18.199 Y5.944 in the CAD files: jobs with the same X0 Y0 line up)"
+    assert b[1].startswith("(X0 Y0 = X16.705 Y4.449") and b[2] == "(Mirrored about X=40 in the CAD files: board turned over)"
+    assert not any("Mirrored" in l for l in a)

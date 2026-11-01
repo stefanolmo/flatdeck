@@ -13,6 +13,8 @@ echo "==> Virtual environment and package"
 python3 -m venv "$PREFIX/venv"
 "$PREFIX/venv/bin/pip" install --upgrade pip
 "$PREFIX/venv/bin/pip" install "$HERE"
+# pip would keep an old copy if the version did not change: always replace the package itself
+"$PREFIX/venv/bin/pip" install --force-reinstall --no-deps "$HERE"
 
 echo "==> Launcher and icon"
 ICONS="$HOME/.local/share/icons/hicolor"

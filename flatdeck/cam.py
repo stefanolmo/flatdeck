@@ -97,9 +97,13 @@ class CutoutParams:
 
 
 class _Writer:
-    def __init__(self, shift, title: str, spindle: int, travel_z: float):
+    def __init__(self, shift, title: str, spindle: int, travel_z: float, mirror_x: float | None = None):
         self.shift = np.asarray(shift, dtype=float)
-        self.lines = [f"(FlatDeck {__version__} - {title})", "G21 G90 G94"]
+        self.lines = [f"(FlatDeck {__version__} - {title})",
+                      f"(X0 Y0 = X{self.n(self.shift[0])} Y{self.n(self.shift[1])} in the CAD files: jobs with the same X0 Y0 line up)"]
+        if mirror_x is not None:
+            self.lines.append(f"(Mirrored about X={self.n(mirror_x)} in the CAD files: board turned over)")
+        self.lines.append("G21 G90 G94")
         self.spindle = spindle
         self.travel = travel_z
         self.feed = None
@@ -264,7 +268,7 @@ def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolatio
     _check(p.feed > 0 and p.plunge > 0, "Feed rates must be positive")
     res = CamResult(kind="isolation", origin=(float(origin[0]), float(origin[1])), name=name, tool_dia=p.tool_dia)
     passes = isolation_loops(copper, p, res.warnings, res.marks)
-    w = _Writer(origin, f"Isolation, tool {p.tool_dia:g} mm, {p.passes} passes", p.spindle, p.travel_z)
+    w = _Writer(origin, f"Isolation, tool {p.tool_dia:g} mm, {p.passes} passes", p.spindle, p.travel_z, p.mirror_x)
     w.start()
     cur = np.asarray(origin, dtype=float)
     n_loops = 0
@@ -318,7 +322,7 @@ def hv_clearance(hv, others, p: HVParams, origin=(0.0, 0.0), name: str = "HV cle
         res.warnings.append(f"{len(hit)} piece(s) of other copper lie within {max(p.clearance, p.tool_dia):g} mm of the HV islands "
                             "and would be milled away (shown in red): move them or reduce the clearance")
     offs = hv_offsets(p)
-    w = _Writer(origin, f"HV clearance {p.clearance:g} mm, tool {p.tool_dia:g} mm, {len(offs)} passes", p.spindle, p.travel_z)
+    w = _Writer(origin, f"HV clearance {p.clearance:g} mm, tool {p.tool_dia:g} mm, {len(offs)} passes", p.spindle, p.travel_z, p.mirror_x)
     w.start()
     cur = np.asarray(origin, dtype=float)
     for off in offs:
@@ -347,7 +351,7 @@ def drill(df: DrillFile, p: DrillParams, origin=(0.0, 0.0), name: str = "Drillin
     _check(p.travel_z > 0 and p.change_z >= p.travel_z, "Safe Z must be > 0 and tool-change Z ≥ safe Z")
     _check(p.plunge > 0 and p.feed > 0, "Feed rates must be positive")
     res = CamResult(kind="drill", origin=(float(origin[0]), float(origin[1])), name=name)
-    w = _Writer(origin, "Drilling", p.spindle, p.travel_z)
+    w = _Writer(origin, "Drilling", p.spindle, p.travel_z, p.mirror_x)
     chosen = [t for t in sorted(df.tools.values(), key=lambda t: t.dia) if p.tools.get(t.number, True)]
     if p.mirror_x is not None:
         chosen = [DrillTool(t.number, t.dia, _flip(t.holes, p.mirror_x) if len(t.holes) else t.holes,

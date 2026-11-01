@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flatdeck"
-version = "0.1.0"
+version = "0.2.0"
 description = "Gerber and Excellon to GRBL G-code for milling PCBs (a FlatCAM alternative)"
 readme = "README.md"
 requires-python = ">=3.10"

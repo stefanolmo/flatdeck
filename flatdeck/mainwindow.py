@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
         self.view.set_project(self.project)
         self._set_tooltips()
         self.statusBar().showMessage("Ready. Open a Gerber or Excellon file.")
+        self._log(f"FlatDeck {__version__}")
         self._refresh()
 
     # ------------------------------------------------------------------ construction
