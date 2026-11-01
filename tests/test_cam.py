@@ -255,9 +255,9 @@ def test_enclosed_island_is_cleared_when_enabled():
     assert len(on.paths) > len(off.paths) + 5 and on.length > off.length * 3
     assert any("enclosed copper island" in w and "cleared" in w for w in on.warnings) and not any("enclosed" in w for w in off.warnings)
     # the leftover ring (between the pad groove at r=0.6 and the clearance groove at r=3.9) is covered completely by the tool
-    regions = cam.enclosed_regions([l for l, _ in off.paths])
+    regions = cam.enclosed_regions([l for l, _ in off.paths], 0.1)
     left = geom.difference(regions, _stroke_union(on, 0.2))
-    assert abs(geom.total_area(regions) - math.pi * (3.9 ** 2 - 0.6 ** 2)) < 0.3
+    assert abs(geom.total_area(regions) - math.pi * (3.8 ** 2 - 0.7 ** 2)) < 0.3          # what the bands (r = 0.1 each side) left
     assert abs(geom.total_area(left)) < 0.005 * geom.total_area(regions), geom.total_area(left)   # only polygon-approximation slivers (µm wide)
     # and the design copper is untouched: no clearing loop gets closer than the tool radius to it
     from flatdeck import islands
@@ -289,3 +289,37 @@ def test_clearing_needs_inside_grooves_and_respects_mirror():
 def test_no_enclosed_islands_is_reported_not_an_error():
     res = cam.isolate(_two_pads(0.5), cam.IsolationParams(tool_dia=0.2, clear_islands=True))
     assert any("No enclosed copper islands" in w for w in res.warnings) and len(res.paths) == 2
+
+
+def test_triangle_between_three_pads_is_cleared():
+    """Pads whose own groove bands overlap leave a floating triangle between them even though no groove loop encloses it."""
+    d = 1.6
+    pads = [geom.circle(0, 0, 0.5), geom.circle(d, 0, 0.5), geom.circle(d / 2, d * math.sqrt(3) / 2, 0.5)]
+    off = cam.isolate(pads, cam.IsolationParams(tool_dia=0.4))
+    on = cam.isolate(pads, cam.IsolationParams(tool_dia=0.4, clear_islands=True))
+    assert len(on.paths) > len(off.paths)
+    regions = cam.enclosed_regions([l for l, _ in off.paths], 0.2)
+    assert len(regions) == 1 and 0.001 < abs(geom.area(regions[0])) < 0.5
+    assert abs(geom.total_area(geom.difference(regions, _stroke_union(on, 0.4)))) < 1e-3     # nothing of it is left
+
+
+def test_fancoil_bottom_with_wide_tool_and_margin_clears_every_enclosed_region_and_keeps_the_margin_strip():
+    """The user's board (tool 2.5 mm, safety margin 0.2 mm): 16 enclosed regions between the groove bands, all removed;
+    the strip of copper left around the traces by the margin is never touched."""
+    from flatdeck import islands
+    from flatdeck.model import Project
+    p = Project()
+    p.load("examples/BoardFancoil_copperBottom.gbl")
+    cu = p.layers[0].gerber.polys
+    par = cam.IsolationParams(tool_dia=2.5, margin=0.2)
+    off = cam.isolate(cu, par)
+    on = cam.isolate(cu, cam.IsolationParams(tool_dia=2.5, margin=0.2, clear_islands=True))
+    regions = cam.enclosed_regions([l for l, _ in off.paths], 1.25)
+    assert len(islands.split(regions)) == 16
+    assert any("16 enclosed copper island(s)" in w for w in on.warnings)
+    assert abs(geom.total_area(geom.difference(regions, _stroke_union(on, 2.5)))) < 0.005 * geom.total_area(regions)
+    # the margin strip: copper grown by the margin stays outside every tool disc (tool centres never closer than margin + r)
+    protected = islands.split(geom.offset(geom.union(cu), 0.2 + 1.25 - 0.01))
+    for l, _ in on.paths[len(off.paths):]:
+        for q in l:
+            assert not any(isl.contains(*q) for isl in protected)

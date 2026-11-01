@@ -44,13 +44,14 @@ Options: `--no-splash` (or `FLATDECK_NO_SPLASH=1`) skips the 3-second splash scr
 | Cut-out | from the outline layer (closed profiles are chained, inner ones included) or from the data bounding box + margin; progressive depth passes; **tabs** (2 or 4) so the board does not come loose |
 | Transforms | mirror X/Y, rotate 90°, all applied to the whole project |
 
-**Enclosed copper islands.** Isolation grooves can close around a piece of clad copper that belongs to nothing: the ring left between a
-pad and the clearance cut around it inside a copper pour, or the copper between two traces whose grooves fuse at both ends. The
-option *Also clear enclosed copper islands* (Isolation tab, off by default) mills those pieces away with concentric passes, using
-the same tool and depth, only where the grooves did not already remove everything. It never touches the design copper, and it needs
-the inside grooves (not available with *Outside only*). With a fine tool large islands mean many passes: a 47 mm² island takes about
-44 extra passes (+5 min with a 0.2 mm tool); the Messages tab reports how many islands were found and how many passes were added.
-On the example boards of this repository there are none, so the option changes nothing there.
+**Enclosed copper islands.** Where the groove bands of neighbouring pads and traces overlap, they can close around a piece of clad
+copper that belongs to nothing: the triangles and diamonds between four pads, the ring left around a pad inside a copper pour. They
+stay on the board as floating copper. The option *Also clear enclosed copper islands* (Isolation tab, off by default) mills them away
+with concentric passes, using the same tool and depth. It only works on copper that is completely enclosed by the grooves, it stays
+tangent to the groove bands (so it never cuts into the traces, nor into the strip of copper left around them by the *Safety margin*),
+and it needs the inside grooves (not available with *Outside only*). The Messages tab says how many islands were found and how many
+passes were added. Example: on `examples/BoardFancoil_copperBottom.gbl` with a 2.5 mm tool and 0.2 mm margin, 16 islands (152.7 mm²)
+are cleared with 20 extra passes: 8.6 → 11.8 min.
 
 **Traces too thin?** The cutting width is computed from the bit data (V-bit: tip + 2 × depth × tan(angle / 2)); real bits rarely match it
 exactly (the real tip is often wider than declared, wear, runout, a Z zero slightly too deep). Two controls in the Isolation tab:

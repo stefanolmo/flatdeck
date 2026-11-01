@@ -237,31 +237,39 @@ def _split_merged(base, loops, r: float, rb: float, warnings: list | None, marks
     return out
 
 
-def enclosed_regions(loops) -> list:
-    """Clad copper left fully enclosed by the grooves: the bounded components of the complement of the groove loops
-    (e.g. the ring left between a pad and the clearance cut around it). Returned as polygons with holes."""
-    w = geom.union(loops)
-    cavities = [h[::-1] for h in w if geom.area(h) < 0]
-    return geom.difference(cavities, w) if cavities else []
+def enclosed_regions(loops, r: float) -> list:
+    """Clad copper left fully enclosed by the groove bands: the bounded components of what is neither inside the groove loops
+    nor within the tool radius `r` of them (the ring left around a pad inside a copper pour, the triangles between neighbouring
+    pads whose grooves overlap, ...). Returned as polygons with holes, each one exactly the copper still to be removed."""
+    reach = geom.offset(geom.union(loops), r)             # everything the loops either enclose or cut
+    cavities = [h[::-1] for h in reach if geom.area(h) < 0]
+    return geom.difference(cavities, reach) if cavities else []
 
 
 def clearing_loops(regions, r: float, overlap: float) -> list:
-    """Concentric tool-centre loops that clear `regions` (nothing is generated where the grooves already removed everything)."""
+    """Concentric tool-centre loops that clear `regions`: the first one runs along their boundary (the tool is then tangent to the
+    groove bands and never enters the area inside the loops), the next ones go inward until nothing is left. Whatever the loops
+    did not reach (parts of uneven width) is cleared by repeating the same on the uncovered rest."""
     step = 2 * r * (1 - overlap)
-    out, cur = [], geom.clean(geom.offset(regions, -r))
-    for _ in range(400):
-        if not cur:
+
+    def concentric(area) -> list:
+        out, cur = [], geom.clean(area)
+        for _ in range(400):
+            if not cur:
+                break
+            out += cur
+            cur = geom.clean(geom.offset(cur, -step))
+        return out
+
+    out = concentric(regions)
+    for _ in range(8):
+        cover = []
+        for l in out:
+            cover += geom.stroke(np.vstack([l, l[:1]]), 2 * r)
+        rest = [u for u in geom.difference(regions, geom.union(cover)) if abs(geom.area(u)) > 0.01]
+        if not rest:
             break
-        out += cur
-        nxt = geom.clean(geom.offset(cur, -step))
-        if not nxt:                                   # what is left is narrower than two steps: one last, shallower pass
-            for f in np.arange(0.95, 0.05, -0.05):
-                nxt = geom.clean(geom.offset(cur, -f * step))
-                if nxt:
-                    out += nxt
-                    break
-            break
-        cur = nxt
+        out += concentric(rest)
     return out
 
 
@@ -306,7 +314,7 @@ def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolatio
         if p.mode == "ext":
             res.warnings.append("Clearing enclosed islands needs the inside grooves: not done with 'Outside only'")
         else:
-            regions = enclosed_regions(raw0)
+            regions = enclosed_regions(raw0, p.tool_dia / 2)
             cleared = clearing_loops(regions, p.tool_dia / 2, p.overlap)
             if p.mirror_x is not None:
                 cleared = [_flip(l, p.mirror_x)[::-1] for l in cleared]
