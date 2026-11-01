@@ -48,6 +48,7 @@ class IsolationParams:
     mode: str = "all"               # all | ext | int
     margin: float = 0.0             # extra distance between the copper edge and the groove (traces stay this much wider)
     clear_islands: bool = False     # also mill away the copper left enclosed between the grooves (floating islands)
+    clear_rect: bool = False        # alternative: mill away ALL the copper inside a rectangle around the circuit
     cut_z: float = -0.05
     travel_z: float = 2.0
     feed: float = 120.0
@@ -273,8 +274,27 @@ def clearing_loops(regions, r: float, overlap: float) -> list:
     return out
 
 
+def rect_clearing(raw: list, r: float, overlap: float):
+    """Tool-centre loops that remove every bit of copper inside the rectangle that touches the outer edge of the grooves, except the
+    design copper and its safety-margin strip (the inside of the first-pass loops). Returns (loops, rectangle bounds, copper removed).
+    The loops run along the edge of the copper still to be removed, so the tool is tangent to the groove bands (it never enters the
+    first-pass blob) and, along the rectangle, tangent to its sides (it never leaves it); the four corners stay slightly rounded."""
+    blob = geom.union(raw[0])                                  # design copper + margin strip + the inner half of the first groove
+    strokes = []
+    for loops in raw:
+        for l in loops:
+            strokes += geom.stroke(np.vstack([l, l[:1]]), 2 * r)
+    done = geom.union(strokes + blob)                          # everything already cut or protected
+    box = geom.bounds(done)
+    rect = [rect_outline(box, 0.0)]
+    target = geom.difference(rect, done)                       # copper still to remove
+    reachable = geom.intersection(target, geom.offset(rect, -r))     # where the tool, kept inside the rectangle, can be centred
+    side = [np.asarray(l) for l in geom.offset(rect, -r)]            # one loop along the four sides: covers the strip next to them
+    return side + clearing_loops(reachable, r, overlap), box, target
+
+
 def isolation_loops(copper, p: IsolationParams, warnings: list | None = None, marks: list | None = None,
-                    raw0: list | None = None) -> list:
+                    raw: list | None = None) -> list:
     """Closed tool-centre loops around the copper, one set per pass, innermost pass first."""
     _check(p.tool_dia > 0, "Tool diameter must be positive")
     _check(1 <= p.passes <= 50, "Passes must be between 1 and 50")
@@ -287,8 +307,8 @@ def isolation_loops(copper, p: IsolationParams, warnings: list | None = None, ma
         loops = geom.offset(base, p.tool_dia / 2 + p.margin + i * step)
         if i == 0:
             loops = _split_merged(base, loops, p.tool_dia / 2, p.tool_dia / 2 + p.margin, warnings, marks)
-            if raw0 is not None:
-                raw0.extend(loops)                               # before the outside/inside filter and the mirroring
+        if raw is not None:
+            raw.append(list(loops))                              # before the outside/inside filter and the mirroring
         if p.mode == "ext":
             loops = [l for l in loops if geom.is_outer(l)]
         elif p.mode == "int":
@@ -307,14 +327,22 @@ def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolatio
     _check(p.travel_z > 0, "Safe Z must be positive")
     _check(p.feed > 0 and p.plunge > 0, "Feed rates must be positive")
     res = CamResult(kind="isolation", origin=(float(origin[0]), float(origin[1])), name=name, tool_dia=p.tool_dia)
-    raw0: list = []
-    passes = isolation_loops(copper, p, res.warnings, res.marks, raw0)
+    raw: list = []
+    passes = isolation_loops(copper, p, res.warnings, res.marks, raw)
     cleared = []
-    if p.clear_islands:
+    if p.clear_rect and raw:
+        cleared, box, target = rect_clearing(raw, p.tool_dia / 2, p.overlap)
+        if p.mirror_x is not None:
+            cleared = [_flip(l, p.mirror_x)[::-1] for l in cleared]
+        res.warnings.append(f"Rectangle {box[2] - box[0]:.1f} × {box[3] - box[1]:.1f} mm around the circuit: "
+                            f"{abs(geom.total_area(target)):.1f} mm² of copper removed with {len(cleared)} extra pass(es)")
+        if p.clear_islands:
+            res.warnings.append("'Clear enclosed copper islands' is included in the rectangle option")
+    elif p.clear_islands:
         if p.mode == "ext":
             res.warnings.append("Clearing enclosed islands needs the inside grooves: not done with 'Outside only'")
         else:
-            regions = enclosed_regions(raw0, p.tool_dia / 2)
+            regions = enclosed_regions(raw[0], p.tool_dia / 2)
             cleared = clearing_loops(regions, p.tool_dia / 2, p.overlap)
             if p.mirror_x is not None:
                 cleared = [_flip(l, p.mirror_x)[::-1] for l in cleared]

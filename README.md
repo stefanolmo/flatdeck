@@ -53,6 +53,14 @@ and it needs the inside grooves (not available with *Outside only*). The Message
 passes were added. Example: on `examples/BoardFancoil_copperBottom.gbl` with a 2.5 mm tool and 0.2 mm margin, 16 islands (152.7 mm²)
 are cleared with 20 extra passes: 8.6 → 11.8 min.
 
+**Clearing all the copper around the circuit.** The alternative option *Clear all copper in a rectangle around the circuit* (also off by
+default, mutually exclusive with the previous one) draws a rectangle whose sides touch the outer edge of the outermost grooves and
+mills away **all** the clad copper inside it that is not circuit: traces, pads and their *Safety margin* strip are never touched, and
+the copper outside the rectangle stays as it is. One loop runs along the four sides, the rest follow the edge of the copper still
+to be removed, so nothing is milled twice. Limits: a round tool leaves the four corners of the rectangle and the sharp inside corners
+between the grooves slightly rounded, and with a fine tool this takes a long time (`examples/BoardFancoil_copperBottom.gbl`, 2.5 mm
+tool, 0.2 mm margin: 840 mm² removed, 8.6 → 19.5 min; with a 0.4 mm tool the same board goes from 7.7 to about 85 min).
+
 **Traces too thin?** The cutting width is computed from the bit data (V-bit: tip + 2 × depth × tan(angle / 2)); real bits rarely match it
 exactly (the real tip is often wider than declared, wear, runout, a Z zero slightly too deep). Two controls in the Isolation tab:
 *Measured width* (cut a test groove, measure it, type it: it replaces the computed width) and *Safety margin* (the groove is moved away

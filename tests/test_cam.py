@@ -323,3 +323,69 @@ def test_fancoil_bottom_with_wide_tool_and_margin_clears_every_enclosed_region_a
     for l, _ in on.paths[len(off.paths):]:
         for q in l:
             assert not any(isl.contains(*q) for isl in protected)
+
+
+def _rect_check(cu, tool, margin, rel=0.005):
+    """Run the rectangle option and verify: tangent rectangle, nothing but circuit+margin left inside it, circuit never touched."""
+    off = cam.isolate(cu, cam.IsolationParams(tool_dia=tool, margin=margin))
+    on = cam.isolate(cu, cam.IsolationParams(tool_dia=tool, margin=margin, clear_rect=True))
+    r = tool / 2
+    extra = [l for l, _ in on.paths[len(off.paths):]]
+    assert extra and any("Rectangle" in w for w in on.warnings)
+    # the rectangle touches the outer edge of the outermost groove (loops' bbox grown by the tool radius)
+    lo = np.vstack([l for l, _ in off.paths])
+    box = (lo[:, 0].min() - r, lo[:, 1].min() - r, lo[:, 0].max() + r, lo[:, 1].max() + r)
+    ext = np.vstack(extra)
+    assert ext[:, 0].min() >= box[0] + r - 1e-3 and ext[:, 0].max() <= box[2] - r + 1e-3     # the tool never leaves the rectangle
+    assert ext[:, 1].min() >= box[1] + r - 1e-3 and ext[:, 1].max() <= box[3] - r + 1e-3
+    swept = []
+    for l in extra:
+        swept += geom.stroke(np.vstack([l, l[:1]]), tool)
+    swept = geom.union(swept)
+    core = geom.offset(geom.union(cu), margin - 0.01)                                         # circuit + safety-margin strip
+    assert abs(geom.total_area(geom.intersection(swept, core))) < 1e-3                         # never touched
+    # everything else inside the rectangle (except the four rounded corners) is cut
+    allswept = []
+    for l, _ in on.paths:
+        allswept += geom.stroke(np.vstack([l, l[:1]]), tool)
+    rect = [cam.rect_outline(box, 0.0)]
+    keep = geom.union(geom.offset(geom.union(cu), margin + 0.0) + allswept)
+    left = geom.difference(rect, keep)
+    corners = [cam.rect_outline((cx - r - 0.01, cy - r - 0.01, cx + r + 0.01, cy + r + 0.01), 0.0)
+               for cx, cy in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3]))]
+    left = geom.difference(left, corners)
+    assert abs(geom.total_area(left)) < rel * abs(geom.area(rect[0])), geom.total_area(left)
+    return off, on
+
+
+def test_rectangle_clears_everything_but_the_circuit():
+    pads = [geom.circle(0, 0, 0.8), geom.circle(5, 0, 0.8), geom.circle(2.5, 4, 0.8)]
+    trace = geom.stroke(np.array([[0, 0], [5, 0.0]]), 0.5) + geom.stroke(np.array([[0, 0], [2.5, 4.0]]), 0.5)
+    off, on = _rect_check(geom.union(pads + trace), tool=0.4, margin=0.1)
+    assert on.length > off.length * 3 and on.time_s > off.time_s
+
+
+def test_rectangle_is_off_by_default_and_replaces_island_clearing():
+    cu = _pour_with_pad()
+    off = cam.isolate(cu, cam.IsolationParams(tool_dia=0.2))
+    assert not any("Rectangle" in w for w in off.warnings)
+    both = cam.isolate(cu, cam.IsolationParams(tool_dia=0.2, clear_islands=True, clear_rect=True))
+    assert any("Rectangle" in w for w in both.warnings) and any("included in the rectangle" in w for w in both.warnings)
+    assert not any("cleared with" in w for w in both.warnings)               # the islands pass is not run separately
+
+
+def test_rectangle_mirrors_with_the_board():
+    cu = geom.union([geom.circle(0, 0, 0.8), geom.circle(5, 0, 0.8)])
+    a = cam.isolate(cu, cam.IsolationParams(tool_dia=0.4, clear_rect=True))
+    b = cam.isolate(cu, cam.IsolationParams(tool_dia=0.4, clear_rect=True, mirror_x=10.0))
+    assert len(a.paths) == len(b.paths)
+    xa, xb = np.vstack([l for l, _ in a.paths])[:, 0], np.vstack([l for l, _ in b.paths])[:, 0]
+    assert abs(xb.mean() - (20 - xa.mean())) < 1e-2
+
+
+def test_fancoil_rectangle_with_wide_tool_keeps_circuit_and_margin():
+    from flatdeck.model import Project
+    p = Project()
+    p.load("examples/BoardFancoil_copperBottom.gbl")
+    off, on = _rect_check(p.layers[0].gerber.polys, tool=2.5, margin=0.2, rel=0.002)     # what is left: the sharp inside corners a round tool cannot reach
+    assert on.time_s < off.time_s * 3                                         # area clearing, not an overlapping spiral over the whole board

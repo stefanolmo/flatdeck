@@ -237,11 +237,18 @@ class MainWindow(QMainWindow):
         self.iso_clear.setToolTip("After isolating, mill away the copper that stays trapped between the grooves, for example the ring left\n"
                                   "around a pad inside a copper pour. Adds passes (and time) with the same tool and depth.\n"
                                   "Needs the inside grooves: not available with 'Outside only'.")
+        self.iso_rect = QCheckBox("Clear all copper in a rectangle around the circuit")
+        self.iso_rect.setToolTip("Alternative to the option above: draws a rectangle that touches the outer edge of the grooves and mills away\n"
+                                 "ALL the copper inside it that is not circuit (traces, pads and their safety-margin strip stay).\n"
+                                 "Copper outside the rectangle is left as it is. Takes much longer with a fine tool.")
+        self.iso_clear.toggled.connect(lambda on: on and self.iso_rect.setChecked(False))
+        self.iso_rect.toggled.connect(lambda on: on and self.iso_clear.setChecked(False))
         self.iso_skip_hv = QCheckBox("Skip islands marked high-voltage")
         self.iso_skip_hv.setChecked(True)
         self.iso_skip_hv.setToolTip("Those islands are isolated by the wide band of the High voltage tab instead")
         c.body.addWidget(self.iso_mirror)
         c.body.addWidget(self.iso_clear)
+        c.body.addWidget(self.iso_rect)
         c.body.addWidget(self.iso_skip_hv)
         c.body.addWidget(self._gen_button("Generate isolation", self.gen_isolation))
         self._iso_tool_changed()
@@ -421,6 +428,7 @@ class MainWindow(QMainWindow):
             self.iso_spindle: self.iso_spindle.toolTip(),
             self.iso_mirror: self.iso_mirror.toolTip(),
             self.iso_clear: self.iso_clear.toolTip(),
+            self.iso_rect: self.iso_rect.toolTip(),
             self.iso_skip_hv: self.iso_skip_hv.toolTip(),
             # drilling
             self.dr_file: "Excellon drill file to use.",
@@ -709,7 +717,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_NAME, "Load a copper layer.")
             return
         p = cam.IsolationParams(tool_dia=self._iso_eff, passes=self.iso_passes.value(), overlap=self.iso_overlap.value() / 100,
-                                mode=self.iso_mode.currentData(), margin=self.iso_margin.value(), clear_islands=self.iso_clear.isChecked(), cut_z=-self.iso_depth.value(), travel_z=self.iso_travel.value(),
+                                mode=self.iso_mode.currentData(), margin=self.iso_margin.value(), clear_islands=self.iso_clear.isChecked(), clear_rect=self.iso_rect.isChecked(), cut_z=-self.iso_depth.value(), travel_z=self.iso_travel.value(),
                                 feed=self.iso_feed.value(), plunge=self.iso_plunge.value(), spindle=self.iso_spindle.value(),
                                 mirror_x=self.project.mirror_axis() if self.iso_mirror.isChecked() else None)
         name = self._next_name(f"Isolation {lay.name}" + (" (mirrored)" if p.mirror_x is not None else ""))

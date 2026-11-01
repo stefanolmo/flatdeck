@@ -277,3 +277,24 @@ def test_clear_islands_checkbox_adds_passes_and_is_off_by_default(win):
     win.gen_isolation()
     cleared = win.project.jobs()[-1].job
     assert len(cleared.paths) > len(plain.paths) and "cleared" in win.messages.toPlainText()
+
+
+def test_island_and_rectangle_options_are_mutually_exclusive(win):
+    assert not win.iso_rect.isChecked() and win.iso_rect.toolTip()
+    win.iso_clear.setChecked(True)
+    win.iso_rect.setChecked(True)
+    assert win.iso_rect.isChecked() and not win.iso_clear.isChecked()
+    win.iso_clear.setChecked(True)
+    assert win.iso_clear.isChecked() and not win.iso_rect.isChecked()
+
+
+def test_rectangle_option_generates_a_job(win):
+    load_all(win)
+    win.iso_layer.setCurrentIndex(0)
+    win.iso_dia.setValue(0.4)
+    win.gen_isolation()
+    plain = win.project.jobs()[-1].job
+    win.iso_rect.setChecked(True)
+    win.gen_isolation()
+    job = win.project.jobs()[-1].job
+    assert len(job.paths) > len(plain.paths) and "Rectangle" in win.messages.toPlainText()
