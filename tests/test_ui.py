@@ -257,3 +257,23 @@ def test_outline_layer_pins_the_origin(win):
     win.load_file(os.path.join(EX, "TrafficLight_copperBottom.gbl"))
     assert win.project.origin() == o and not win.project.stale_jobs()
     assert "No outline layer" not in win.info.text()
+
+
+def test_clear_islands_checkbox_adds_passes_and_is_off_by_default(win):
+    import numpy as np
+    from flatdeck import geom
+    from flatdeck.gerber import GerberLayer
+    from flatdeck.model import Layer
+    ring = geom.difference([geom.circle(0, 0, 5.0)], [geom.circle(0, 0, 4.0)])
+    cu = geom.union(ring + [geom.circle(0, 0, 0.5)])
+    win.project.layers.append(Layer("pour", "copper", gerber=GerberLayer(name="pour", polys=cu)))
+    win._refresh()
+    win.iso_layer.setCurrentIndex(win.iso_layer.findText("pour"))
+    win.iso_dia.setValue(0.2)
+    assert not win.iso_clear.isChecked() and win.iso_clear.toolTip()
+    win.gen_isolation()
+    plain = win.project.jobs()[-1].job
+    win.iso_clear.setChecked(True)
+    win.gen_isolation()
+    cleared = win.project.jobs()[-1].job
+    assert len(cleared.paths) > len(plain.paths) and "cleared" in win.messages.toPlainText()

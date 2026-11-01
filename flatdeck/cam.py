@@ -47,6 +47,7 @@ class IsolationParams:
     overlap: float = 0.2            # fraction of the tool diameter shared by adjacent passes
     mode: str = "all"               # all | ext | int
     margin: float = 0.0             # extra distance between the copper edge and the groove (traces stay this much wider)
+    clear_islands: bool = False     # also mill away the copper left enclosed between the grooves (floating islands)
     cut_z: float = -0.05
     travel_z: float = 2.0
     feed: float = 120.0
@@ -236,7 +237,36 @@ def _split_merged(base, loops, r: float, rb: float, warnings: list | None, marks
     return out
 
 
-def isolation_loops(copper, p: IsolationParams, warnings: list | None = None, marks: list | None = None) -> list:
+def enclosed_regions(loops) -> list:
+    """Clad copper left fully enclosed by the grooves: the bounded components of the complement of the groove loops
+    (e.g. the ring left between a pad and the clearance cut around it). Returned as polygons with holes."""
+    w = geom.union(loops)
+    cavities = [h[::-1] for h in w if geom.area(h) < 0]
+    return geom.difference(cavities, w) if cavities else []
+
+
+def clearing_loops(regions, r: float, overlap: float) -> list:
+    """Concentric tool-centre loops that clear `regions` (nothing is generated where the grooves already removed everything)."""
+    step = 2 * r * (1 - overlap)
+    out, cur = [], geom.clean(geom.offset(regions, -r))
+    for _ in range(400):
+        if not cur:
+            break
+        out += cur
+        nxt = geom.clean(geom.offset(cur, -step))
+        if not nxt:                                   # what is left is narrower than two steps: one last, shallower pass
+            for f in np.arange(0.95, 0.05, -0.05):
+                nxt = geom.clean(geom.offset(cur, -f * step))
+                if nxt:
+                    out += nxt
+                    break
+            break
+        cur = nxt
+    return out
+
+
+def isolation_loops(copper, p: IsolationParams, warnings: list | None = None, marks: list | None = None,
+                    raw0: list | None = None) -> list:
     """Closed tool-centre loops around the copper, one set per pass, innermost pass first."""
     _check(p.tool_dia > 0, "Tool diameter must be positive")
     _check(1 <= p.passes <= 50, "Passes must be between 1 and 50")
@@ -249,6 +279,8 @@ def isolation_loops(copper, p: IsolationParams, warnings: list | None = None, ma
         loops = geom.offset(base, p.tool_dia / 2 + p.margin + i * step)
         if i == 0:
             loops = _split_merged(base, loops, p.tool_dia / 2, p.tool_dia / 2 + p.margin, warnings, marks)
+            if raw0 is not None:
+                raw0.extend(loops)                               # before the outside/inside filter and the mirroring
         if p.mode == "ext":
             loops = [l for l in loops if geom.is_outer(l)]
         elif p.mode == "int":
@@ -267,7 +299,22 @@ def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolatio
     _check(p.travel_z > 0, "Safe Z must be positive")
     _check(p.feed > 0 and p.plunge > 0, "Feed rates must be positive")
     res = CamResult(kind="isolation", origin=(float(origin[0]), float(origin[1])), name=name, tool_dia=p.tool_dia)
-    passes = isolation_loops(copper, p, res.warnings, res.marks)
+    raw0: list = []
+    passes = isolation_loops(copper, p, res.warnings, res.marks, raw0)
+    cleared = []
+    if p.clear_islands:
+        if p.mode == "ext":
+            res.warnings.append("Clearing enclosed islands needs the inside grooves: not done with 'Outside only'")
+        else:
+            regions = enclosed_regions(raw0)
+            cleared = clearing_loops(regions, p.tool_dia / 2, p.overlap)
+            if p.mirror_x is not None:
+                cleared = [_flip(l, p.mirror_x)[::-1] for l in cleared]
+            if regions:
+                res.warnings.append(f"{len(islands.split(regions))} enclosed copper island(s) of {abs(geom.total_area(regions)):.1f} mm² cleared "
+                                    f"with {len(cleared)} extra pass(es)")
+            else:
+                res.warnings.append("No enclosed copper islands to clear")
     w = _Writer(origin, f"Isolation, tool {p.tool_dia:g} mm, {p.passes} passes", p.spindle, p.travel_z, p.mirror_x)
     w.start()
     cur = np.asarray(origin, dtype=float)
@@ -283,6 +330,16 @@ def isolate(copper, p: IsolationParams, origin=(0.0, 0.0), name: str = "Isolatio
             cur = loop[0]
             res.paths.append((loop, True))
             n_loops += 1
+    for loop in geom.order_nearest(cleared, cur):
+        w.lift()
+        w.rapid_xy(loop[0])
+        w.feed_z(p.cut_z, p.plunge)
+        for q in loop[1:]:
+            w.feed_xy(q, p.feed)
+        w.feed_xy(loop[0], p.feed)
+        cur = loop[0]
+        res.paths.append((loop, True))
+        n_loops += 1
     w.end()
     if p.mirror_x is not None:
         res.marks = [_flip(m, p.mirror_x) for m in res.marks]

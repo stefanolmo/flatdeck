@@ -44,6 +44,14 @@ Options: `--no-splash` (or `FLATDECK_NO_SPLASH=1`) skips the 3-second splash scr
 | Cut-out | from the outline layer (closed profiles are chained, inner ones included) or from the data bounding box + margin; progressive depth passes; **tabs** (2 or 4) so the board does not come loose |
 | Transforms | mirror X/Y, rotate 90°, all applied to the whole project |
 
+**Enclosed copper islands.** Isolation grooves can close around a piece of clad copper that belongs to nothing: the ring left between a
+pad and the clearance cut around it inside a copper pour, or the copper between two traces whose grooves fuse at both ends. The
+option *Also clear enclosed copper islands* (Isolation tab, off by default) mills those pieces away with concentric passes, using
+the same tool and depth, only where the grooves did not already remove everything. It never touches the design copper, and it needs
+the inside grooves (not available with *Outside only*). With a fine tool large islands mean many passes: a 47 mm² island takes about
+44 extra passes (+5 min with a 0.2 mm tool); the Messages tab reports how many islands were found and how many passes were added.
+On the example boards of this repository there are none, so the option changes nothing there.
+
 **Traces too thin?** The cutting width is computed from the bit data (V-bit: tip + 2 × depth × tan(angle / 2)); real bits rarely match it
 exactly (the real tip is often wider than declared, wear, runout, a Z zero slightly too deep). Two controls in the Isolation tab:
 *Measured width* (cut a test groove, measure it, type it: it replaces the computed width) and *Safety margin* (the groove is moved away

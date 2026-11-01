@@ -233,3 +233,59 @@ def test_header_states_origin_and_mirror_so_two_files_can_be_compared():
     assert a[1] == "(X0 Y0 = X18.199 Y5.944 in the CAD files: jobs with the same X0 Y0 line up)"
     assert b[1].startswith("(X0 Y0 = X16.705 Y4.449") and b[2] == "(Mirrored about X=40 in the CAD files: board turned over)"
     assert not any("Mirrored" in l for l in a)
+
+
+def _pour_with_pad():
+    """A 10 mm copper disc with a 8 mm round clearance in it and a 1 mm pad in the middle: the ring between them is left over."""
+    ring = geom.difference([geom.circle(0, 0, 5.0)], [geom.circle(0, 0, 4.0)])
+    return geom.union(ring + [geom.circle(0, 0, 0.5)])
+
+
+def _stroke_union(res, width):
+    cover = []
+    for l, closed in res.paths:
+        cover += geom.stroke(np.vstack([l, l[:1]]) if closed else l, width)
+    return geom.union(cover)
+
+
+def test_enclosed_island_is_cleared_when_enabled():
+    cu = _pour_with_pad()
+    off = cam.isolate(cu, cam.IsolationParams(tool_dia=0.2))
+    on = cam.isolate(cu, cam.IsolationParams(tool_dia=0.2, clear_islands=True))
+    assert len(on.paths) > len(off.paths) + 5 and on.length > off.length * 3
+    assert any("enclosed copper island" in w and "cleared" in w for w in on.warnings) and not any("enclosed" in w for w in off.warnings)
+    # the leftover ring (between the pad groove at r=0.6 and the clearance groove at r=3.9) is covered completely by the tool
+    regions = cam.enclosed_regions([l for l, _ in off.paths])
+    left = geom.difference(regions, _stroke_union(on, 0.2))
+    assert abs(geom.total_area(regions) - math.pi * (3.9 ** 2 - 0.6 ** 2)) < 0.3
+    assert abs(geom.total_area(left)) < 0.005 * geom.total_area(regions), geom.total_area(left)   # only polygon-approximation slivers (µm wide)
+    # and the design copper is untouched: no clearing loop gets closer than the tool radius to it
+    from flatdeck import islands
+    near = islands.split(geom.offset(cu, 0.1 - 0.003))                           # copper grown by (almost) the tool radius
+    for l, _ in on.paths[len(off.paths):]:
+        for q in l:
+            assert not any(isl.contains(*q) for isl in near)
+
+
+def test_clearing_does_nothing_where_grooves_already_removed_everything():
+    ring = geom.difference([geom.circle(0, 0, 5.0)], [geom.circle(0, 0, 4.0)])
+    pad = [geom.circle(0, 0, 3.8)]                                            # 0.2 mm gap: narrower than 2 tool radii
+    res = cam.isolate(geom.union(ring + pad), cam.IsolationParams(tool_dia=0.2, clear_islands=True))
+    plain = cam.isolate(geom.union(ring + pad), cam.IsolationParams(tool_dia=0.2))
+    assert len(res.paths) == len(plain.paths)
+
+
+def test_clearing_needs_inside_grooves_and_respects_mirror():
+    cu = _pour_with_pad()
+    ext = cam.isolate(cu, cam.IsolationParams(tool_dia=0.2, mode="ext", clear_islands=True))
+    assert any("Outside only" in w for w in ext.warnings)
+    a = cam.isolate(cu, cam.IsolationParams(tool_dia=0.2, clear_islands=True))
+    b = cam.isolate(cu, cam.IsolationParams(tool_dia=0.2, clear_islands=True, mirror_x=10.0))
+    assert len(a.paths) == len(b.paths)
+    xa, xb = np.vstack([l for l, _ in a.paths])[:, 0], np.vstack([l for l, _ in b.paths])[:, 0]
+    assert abs(xb.mean() - (20 - xa.mean())) < 1e-3
+
+
+def test_no_enclosed_islands_is_reported_not_an_error():
+    res = cam.isolate(_two_pads(0.5), cam.IsolationParams(tool_dia=0.2, clear_islands=True))
+    assert any("No enclosed copper islands" in w for w in res.warnings) and len(res.paths) == 2

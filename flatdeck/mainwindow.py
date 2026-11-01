@@ -233,10 +233,15 @@ class MainWindow(QMainWindow):
                        ("Plunge rate", self.iso_plunge), ("Spindle S", self.iso_spindle)])
         for w in (self.iso_tool, self.iso_dia, self.iso_tip, self.iso_angle, self.iso_depth, self.iso_measured):
             (w.valueChanged if hasattr(w, "valueChanged") else w.currentIndexChanged).connect(lambda *_: self._iso_tool_changed())
+        self.iso_clear = QCheckBox("Also clear enclosed copper islands")
+        self.iso_clear.setToolTip("After isolating, mill away the copper that stays trapped between the grooves, for example the ring left\n"
+                                  "around a pad inside a copper pour. Adds passes (and time) with the same tool and depth.\n"
+                                  "Needs the inside grooves: not available with 'Outside only'.")
         self.iso_skip_hv = QCheckBox("Skip islands marked high-voltage")
         self.iso_skip_hv.setChecked(True)
         self.iso_skip_hv.setToolTip("Those islands are isolated by the wide band of the High voltage tab instead")
         c.body.addWidget(self.iso_mirror)
+        c.body.addWidget(self.iso_clear)
         c.body.addWidget(self.iso_skip_hv)
         c.body.addWidget(self._gen_button("Generate isolation", self.gen_isolation))
         self._iso_tool_changed()
@@ -415,6 +420,7 @@ class MainWindow(QMainWindow):
             self.iso_plunge: "Speed of the vertical move down into the material (mm/min). Keep it lower than the cutting feed.",
             self.iso_spindle: self.iso_spindle.toolTip(),
             self.iso_mirror: self.iso_mirror.toolTip(),
+            self.iso_clear: self.iso_clear.toolTip(),
             self.iso_skip_hv: self.iso_skip_hv.toolTip(),
             # drilling
             self.dr_file: "Excellon drill file to use.",
@@ -703,7 +709,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_NAME, "Load a copper layer.")
             return
         p = cam.IsolationParams(tool_dia=self._iso_eff, passes=self.iso_passes.value(), overlap=self.iso_overlap.value() / 100,
-                                mode=self.iso_mode.currentData(), margin=self.iso_margin.value(), cut_z=-self.iso_depth.value(), travel_z=self.iso_travel.value(),
+                                mode=self.iso_mode.currentData(), margin=self.iso_margin.value(), clear_islands=self.iso_clear.isChecked(), cut_z=-self.iso_depth.value(), travel_z=self.iso_travel.value(),
                                 feed=self.iso_feed.value(), plunge=self.iso_plunge.value(), spindle=self.iso_spindle.value(),
                                 mirror_x=self.project.mirror_axis() if self.iso_mirror.isChecked() else None)
         name = self._next_name(f"Isolation {lay.name}" + (" (mirrored)" if p.mirror_x is not None else ""))
