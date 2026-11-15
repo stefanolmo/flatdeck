@@ -40,6 +40,7 @@ Options: `--no-splash` (or `FLATDECK_NO_SPLASH=1`) skips the 3-second splash scr
 |---|---|
 | Isolation | copper offset with `pyclipper`; multiple passes with overlap; outside / inside / both; flat end mill or **V-bit** (angle chosen from 10°–90° presets or typed freely; cutting width computed from tip, angle and depth); toolpaths ordered by proximity |
 | High voltage | wide copper-free band around selected copper islands (mains traces), cut with a large flat end mill (e.g. 2.5 or 3 mm) as a **separate job**; see below |
+| Slots | through-cuts in the board between high-voltage and low-voltage copper, suggested automatically from the marked HV islands and/or drawn by hand, flat end mill 1–3 mm (settable), no bridges; see below |
 | Drilling | one job per file, selectable tools sorted by diameter, **M0 pause at every bit change**, optional peck drilling, slots (G85 and routed) |
 | Cut-out | from the outline layer (closed profiles are chained, inner ones included) or from the data bounding box + margin; progressive depth passes; **tabs** (2 or 4) so the board does not come loose |
 | Transforms | mirror X/Y, rotate 90°, all applied to the whole project |
@@ -89,6 +90,29 @@ traces (click again to unmark). Marked islands turn red. Mark the same net again
   clearance; FlatDeck does not move anything for you.
 - **Which clearance is safe for your voltage is up to you and the applicable standard; FlatDeck only cuts the number you type.**
   A copper-free band is not a substitute for proper design of mains circuits.
+
+## Slots between high-voltage and low-voltage copper
+
+A slot cut through the board lengthens the creepage path between the two zones. Open the **Slots** tab:
+
+- **Suggest slots from the HV islands** uses the islands you marked in the *High voltage* tab (on **both** copper layers: the slot cuts
+  through the whole board). The slot centre line is the curve at *Offset from HV copper* from the HV edge, kept only where low-voltage
+  copper is within *Reach to low voltage* of it, minus the stretches that would come closer than the *Keep-out from copper* to any
+  copper (both layers) or hole, and cut at the board edge: a slot that reaches the edge leaves it open. A natural offset is half of
+  the clearance of the HV band (with the default 2 mm tool and 0.5 mm keep-out it must be at least 1.5 mm).
+- **Draw a slot in the view**: click the points, double-click or Enter to finish, Escape to cancel. The ends snap to the board edge.
+  Suggested and drawn slots live in one list (select one to highlight it, remove it, or clear all); a new suggestion replaces only
+  the suggested ones.
+- **Tool and width**: a flat end mill, any diameter (default 2 mm, meant for 1–3 mm). *Slot width* "as the tool" cuts one pass along
+  the centre line, going back and forth down to the full depth without lifting; a larger width pockets the strip with concentric
+  passes. Depth is board thickness + ~0.2 mm. The job needs its own bit: zero Z again after the tool change.
+- **Checks**: red marks and a warning where a slot comes closer than the keep-out to copper or a hole, if part of it lies outside the
+  board, or if it is narrower than 1 mm (standards often do not count the walls of a narrower slot for creepage).
+- **No bridges are left.** A suggested curve that would close on itself is not suggested (it would cut the island out of the board): draw
+  those by hand, leaving the island attached somewhere. Think about how the board is held while it is cut: a slot weakens it.
+
+Which offset, width and distance are enough for your voltage is for you and the applicable standard to decide: FlatDeck cuts what you
+set and checks only the geometry.
 
 ## Limits of v1 (what is NOT there compared with FlatCAM)
 

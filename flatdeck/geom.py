@@ -114,6 +114,22 @@ def intersection(subject, clip) -> Paths:
     return from_c(pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO))
 
 
+def clip_open(paths, region, inside: bool = True) -> Paths:
+    """Pieces of the open polylines `paths` that lie inside (or, with inside=False, outside) the polygons `region`."""
+    s = [p for p in to_c(paths)]
+    if not s:
+        return []
+    c = to_c(region)
+    if not c:
+        return from_c(s) if not inside else []
+    pc = pyclipper.Pyclipper()
+    for p in s:
+        pc.AddPath(p, pyclipper.PT_SUBJECT, False)
+    pc.AddPaths(c, pyclipper.PT_CLIP, True)
+    tree = pc.Execute2(pyclipper.CT_INTERSECTION if inside else pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+    return from_c(pyclipper.OpenPathsFromPolyTree(tree))
+
+
 def offset(paths, delta: float, join=pyclipper.JT_ROUND, miter: float = 2.0) -> Paths:
     """Grow (delta > 0) or shrink closed polygons. Input must be normalised (use union first)."""
     c = to_c(paths)

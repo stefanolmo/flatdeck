@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
+
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel,
@@ -39,6 +41,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_body()
         self.view.set_project(self.project)
+        self._slot_preview_width()
         self._set_tooltips()
         self.statusBar().showMessage("Ready. Open a Gerber or Excellon file.")
         self._log(f"FlatDeck {__version__}")
@@ -119,8 +122,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._drill_panel(), "Drilling")
         self._hv_tab = self._hv_panel()
         self.tabs.addTab(self._hv_tab, "High voltage")
+        self._slot_tab = self._slot_panel()
+        self.tabs.addTab(self._slot_tab, "Slots")
         self.tabs.addTab(self._cutout_panel(), "Cut-out")
-        self.tabs.currentChanged.connect(lambda *_: self._update_pick())
+        self.tabs.currentChanged.connect(lambda *_: (self._update_pick(), self._update_draw()))
         lv.addWidget(self.tabs)
         lv.addStretch(1)
         sc = QScrollArea()
@@ -135,6 +140,9 @@ class MainWindow(QMainWindow):
         right.setChildrenCollapsible(False)
         self.view = BoardView()
         self.view.picked.connect(self._picked)
+        self.view.drawPoint.connect(self._draw_point)
+        self.view.drawFinished.connect(self._draw_finished)
+        self.view.drawCancelled.connect(self._draw_cancelled)
         self.view.cursorMoved.connect(lambda x, y: self.statusBar().showMessage(f"X {x:8.3f}   Y {y:8.3f}   mm from origin"))
         right.addWidget(self.view)
         bottom = QTabWidget()
@@ -376,6 +384,167 @@ class MainWindow(QMainWindow):
             self._hv_count()
             self._refresh_list_only()
 
+    # ------------------------------------------------------------------ slots
+    def _slot_panel(self) -> QWidget:
+        c = Card("Slots between HV and low voltage")
+        n = QLabel("Through-cuts in the board between the high-voltage copper and the rest, to lengthen the creepage path. "
+                   "Let FlatDeck suggest them from the HV islands you marked (both layers count), draw them by hand, or both.")
+        n.setObjectName("muted")
+        n.setWordWrap(True)
+        c.body.addWidget(n)
+        self.slot_dia = self._field("slot_dia", dspin(0.5, 10, 2.0, 2, " mm", 0.5))
+        self.slot_width = self._field("slot_width", dspin(0, 30, 0, 2, " mm", 0.5))
+        self.slot_width.setSpecialValueText("as the tool")
+        self.slot_offset = self._field("slot_offset", dspin(0.1, 50, 1.5, 2, " mm", 0.25))
+        self.slot_reach = self._field("slot_reach", dspin(0.5, 100, 6, 1, " mm"))
+        self.slot_keep = self._field("slot_keep", dspin(0, 10, 0.5, 2, " mm", 0.1))
+        self.slot_suggest = QPushButton("Suggest slots from the HV islands")
+        self.slot_suggest.clicked.connect(self.suggest_slots)
+        self.slot_draw = QPushButton("Draw a slot in the view")
+        self.slot_draw.setCheckable(True)
+        self.slot_draw.toggled.connect(lambda *_: self._update_draw())
+        row = QHBoxLayout()
+        row.addWidget(self.slot_suggest, 1)
+        row.addWidget(self.slot_draw, 1)
+        c.body.addLayout(row)
+        self.slot_list = QListWidget()
+        self.slot_list.setMinimumHeight(90)
+        self.slot_list.currentRowChanged.connect(self._slot_selected)
+        c.body.addWidget(self.slot_list)
+        rm, clr = QPushButton("Remove selected"), QPushButton("Clear all")
+        rm.clicked.connect(self._slot_remove)
+        clr.clicked.connect(self._slot_clear)
+        row = QHBoxLayout()
+        row.addWidget(rm)
+        row.addWidget(clr)
+        c.body.addLayout(row)
+        self._form(c, [("Flat end mill Ø", self.slot_dia), ("Slot width", self.slot_width), ("Offset from HV copper", self.slot_offset),
+                       ("Reach to low voltage", self.slot_reach), ("Keep-out from copper", self.slot_keep)])
+        self.slot_depth = self._field("slot_depth", dspin(0.1, 20, 1.8, 2, " mm", 0.1))
+        self.slot_step = self._field("slot_step", dspin(0.05, 10, 0.6, 2, " mm", 0.1))
+        self.slot_overlap = self._field("slot_overlap", dspin(0, 90, 20, 0, " %"))
+        self.slot_travel = self._field("slot_travel", dspin(0.5, 50, 2, 1, " mm"))
+        self.slot_feed = self._field("slot_feed", dspin(1, 5000, 100, 0, " mm/min"))
+        self.slot_plunge = self._field("slot_plunge", dspin(1, 2000, 30, 0, " mm/min"))
+        self.slot_spindle = self._field("slot_spindle", ispin(0, 30000, 1000))
+        self.slot_mirror = QCheckBox("Cut from the bottom side: mirror in X")
+        self._form(c, [("Depth", self.slot_depth), ("Step down", self.slot_step), ("Overlap", self.slot_overlap),
+                       ("Safe Z", self.slot_travel), ("Feed rate", self.slot_feed), ("Plunge rate", self.slot_plunge),
+                       ("Spindle S", self.slot_spindle)])
+        c.body.addWidget(self.slot_mirror)
+        n2 = QLabel("Draw: click the points, double-click (or Enter) to finish, Escape to cancel; the ends snap to the board edge. "
+                    "A slot that reaches the edge leaves it open. No bridges are left: a slot that closed around an island would cut it out of the board. "
+                    "Uses its own bit: zero Z again. Which width and distance are enough for your voltage is for you and the standard to decide.")
+        n2.setObjectName("muted")
+        n2.setWordWrap(True)
+        c.body.addWidget(n2)
+        c.body.addWidget(self._gen_button("Generate slots", self.gen_slots))
+        for wd in (self.slot_dia, self.slot_width):
+            wd.valueChanged.connect(lambda *_: self._slot_preview_width())
+        return c
+
+    def _slot_preview_width(self) -> None:
+        self.view.slot_width = max(self.slot_width.value(), self.slot_dia.value())
+        self.view.update()
+
+    def _update_draw(self) -> None:
+        self.view.set_draw_mode(self.slot_draw.isChecked() and self.tabs.currentWidget() is self._slot_tab)
+
+    def _snap(self, x: float, y: float) -> tuple:
+        """Snap to the board edge when the click is within a few pixels of it."""
+        try:
+            outer, _, _ = self.project.board_outline()
+        except ValueError:
+            return x, y
+        closed = np.vstack([outer, outer[:1]])
+        best = None
+        for a, b in zip(closed[:-1], closed[1:]):
+            d = b - a
+            ln2 = float(d @ d)
+            t = min(max(float((np.array([x, y]) - a) @ d) / ln2, 0.0), 1.0) if ln2 > 0 else 0.0
+            q = a + t * d
+            dist = float(np.hypot(*(q - (x, y))))
+            if best is None or dist < best[0]:
+                best = (dist, q)
+        if best is not None and best[0] <= 8 / self.view.scale:
+            return float(best[1][0]), float(best[1][1])
+        return x, y
+
+    def _draw_point(self, x: float, y: float) -> None:
+        pt = self._snap(x, y)
+        if not self.view.draft or np.hypot(pt[0] - self.view.draft[-1][0], pt[1] - self.view.draft[-1][1]) > 1e-6:
+            self.view.draft.append(pt)
+        self.view.update()
+
+    def _draw_finished(self) -> None:
+        if len(self.view.draft) >= 2:
+            s = self.project.add_slot(self.view.draft)
+            self._log(f"Slot drawn: {s.length():.1f} mm")
+            self._refresh_slots()
+        self.view.draft = []
+        self.view._cursor = None
+        self.view.update()
+
+    def _draw_cancelled(self) -> None:
+        self.view.draft = []
+        self.view._cursor = None
+        self.view.update()
+
+    def _refresh_slots(self) -> None:
+        self.slot_list.blockSignals(True)
+        self.slot_list.clear()
+        for i, s in enumerate(self.project.slots):
+            self.slot_list.addItem(f"{'Suggested' if s.auto else 'Drawn'} {i + 1}   ·   {s.length():.1f} mm")
+        self.slot_list.blockSignals(False)
+        self._slot_selected(self.slot_list.currentRow())
+        self.view.update()
+
+    def _slot_selected(self, row: int) -> None:
+        self.view.slot_sel = row
+        self.view.update()
+
+    def _slot_remove(self) -> None:
+        r = self.slot_list.currentRow()
+        if 0 <= r < len(self.project.slots):
+            del self.project.slots[r]
+            self._refresh_slots()
+
+    def _slot_clear(self) -> None:
+        self.project.clear_slots()
+        self._refresh_slots()
+
+    def suggest_slots(self) -> None:
+        try:
+            warnings = self.project.suggest_slots(self.slot_dia.value(), cam.AutoSlotParams(
+                offset=self.slot_offset.value(), reach=self.slot_reach.value(), keepout=self.slot_keep.value()))
+        except ValueError as e:
+            QMessageBox.information(self, APP_NAME, f"{e}.\nMark the HV copper first (High voltage tab, Pick islands in the view)."
+                                    if "high-voltage" in str(e) else str(e))
+            return
+        n = sum(1 for s in self.project.slots if s.auto)
+        self._log(f"Suggested {n} slot(s)")
+        for msg in warnings:
+            self._log(f"  ⚠ {msg}")
+        self._refresh_slots()
+
+    def gen_slots(self) -> None:
+        if not self.project.slots:
+            QMessageBox.information(self, APP_NAME, "There are no slots: draw some or use 'Suggest slots'.")
+            return
+        p = cam.SlotParams(tool_dia=self.slot_dia.value(), width=self.slot_width.value(), cut_z=-self.slot_depth.value(),
+                           step=self.slot_step.value(), travel_z=self.slot_travel.value(), feed=self.slot_feed.value(),
+                           plunge=self.slot_plunge.value(), overlap=self.slot_overlap.value() / 100, spindle=self.slot_spindle.value(),
+                           keepout=self.slot_keep.value(),
+                           mirror_x=self.project.mirror_axis() if self.slot_mirror.isChecked() else None)
+        name = self._next_name("Slots" + (" (mirrored)" if p.mirror_x is not None else ""))
+        paths = [s.pts.copy() for s in self.project.slots]
+        hole_list = self.project.slot_obstacles()[2]
+
+        def go():
+            outer = self.project.board_outline()[0]
+            return cam.slots(paths, p, self.project.origin(), name, copper=self.project.all_copper(), holes=hole_list, board=(outer, []))
+        self._run("slots", go)
+
     def _cutout_panel(self) -> QWidget:
         c = Card("Board cut-out")
         self.co_note = QLabel("")
@@ -453,6 +622,26 @@ class MainWindow(QMainWindow):
             self.hv_plunge: "Speed of the vertical move down (mm/min).",
             self.hv_spindle: "Spindle S value. 0 = do not emit M3/M5.",
             self.hv_mirror: "Tick for a bottom-side layer: the toolpath is mirrored about the board's vertical axis.",
+            # slots
+            self.slot_dia: "Flat end mill used to cut the slots, usually 1 to 3 mm. The slot is at least as wide as the tool.",
+            self.slot_width: "Slot width. 'As the tool' = a single pass along the centre line. A larger value pockets the strip with several passes.\n"
+                             "Standards often count the walls of a slot for creepage only above ~1 mm of width: check the one that applies.",
+            self.slot_offset: "Suggested slots: distance from the edge of the HV copper to the slot centre line. With the 2 mm tool and a 0.5 mm keep-out it must be at least 1.5 mm.\n"
+                              "A natural choice is half the clearance of the HV band.",
+            self.slot_reach: "Suggested slots: keep a stretch only where low-voltage copper is within this distance of the slot centre line.\n"
+                             "Where the HV copper has nothing near it, no slot is needed (and it would only weaken the board).",
+            self.slot_keep: "Smallest distance wanted between the slot edge and any copper or hole. Suggestions respect it; slots you draw are checked against it (red marks).",
+            self.slot_depth: "Cut depth below the copper surface (positive number): board thickness + ~0.2 mm to go through.",
+            self.slot_step: "Depth removed per pass. The cut is repeated, back and forth, until the full depth is reached.",
+            self.slot_overlap: "Overlap between the passes of a slot wider than the tool, as a percentage of the tool diameter.",
+            self.slot_travel: "Height above the board for rapid moves.",
+            self.slot_feed: "Cutting speed in the XY plane (mm/min).",
+            self.slot_plunge: "Speed of the vertical move down (mm/min).",
+            self.slot_spindle: "Spindle S value. 0 = do not emit M3/M5.",
+            self.slot_mirror: "Tick when the board is turned over to cut the slots from its bottom side: the slots are mirrored about the board's vertical axis.",
+            self.slot_list: "Suggested and drawn slots. Select one to highlight it in the view.",
+            self.slot_suggest: "Suggest slot centre lines between the HV islands you marked and the other copper. They replace earlier suggestions; slots you drew stay.",
+            self.slot_draw: "Click the points of a slot in the view: double-click or Enter finishes it, Escape cancels. Ends near the board edge snap to it.",
             # cut-out
             self.co_margin: self.co_margin.toolTip(),
             self.co_dia: "Diameter of the end mill that cuts the board out (e.g. 1 mm). The path runs outside the outline by its radius.",
@@ -600,6 +789,7 @@ class MainWindow(QMainWindow):
         self._refresh_info()
         self._hv_count()
         self._update_pick()
+        self._refresh_slots()
         self.regen_btn.setVisible(bool(self.project.stale_jobs()))
 
     def _item_text(self, l: Layer) -> str:

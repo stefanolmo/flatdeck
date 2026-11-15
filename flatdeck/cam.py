@@ -72,6 +72,29 @@ class HVParams:
 
 
 @dataclass
+class SlotParams:
+    """Through-cuts in the board between high-voltage and low-voltage copper, milled with a flat end mill."""
+    tool_dia: float = 2.0
+    width: float = 0.0              # slot width; 0 (or less than the tool) = as wide as the tool
+    cut_z: float = -1.8
+    step: float = 0.6
+    travel_z: float = 2.0
+    feed: float = 100.0
+    plunge: float = 30.0
+    overlap: float = 0.2            # between the passes of a slot wider than the tool
+    spindle: int = 1000
+    keepout: float = 0.5            # smallest distance wanted between the slot edge and any copper or hole
+    mirror_x: float | None = None
+
+
+@dataclass
+class AutoSlotParams:
+    offset: float = 2.0             # distance from the HV copper edge to the slot centre line
+    reach: float = 6.0              # keep only where low-voltage copper is within this distance of the slot centre line
+    keepout: float = 0.5            # smallest distance between the slot edge and copper / holes
+
+
+@dataclass
 class DrillParams:
     drill_z: float = -1.8
     travel_z: float = 2.0
@@ -593,6 +616,139 @@ def cutout(outer, inner, p: CutoutParams, origin=(0.0, 0.0), name: str = "Cut-ou
         for pc in pieces:
             res.paths.append((pc, len(centres) == 0))
     w.end()
+    res.gcode, res.length, res.time_s = w.text(), w.cut_len, w.time
+    return res
+
+
+# --------------------------------------------------------------------------- slots
+def auto_slots(hv, others, holes, board, tool_dia: float, p: AutoSlotParams):
+    """Suggest slot centre lines that separate the HV copper from the low-voltage copper. All copper layers count (the slot cuts
+    through the board): `hv` and `others` are contours of the HV islands and of the remaining copper of every layer, `holes` the
+    drilled (x, y, dia) and `board` = (outer loop, inner loops). Returns (list of open polylines, warnings).
+
+    The centre line is the curve at `p.offset` from the HV copper, kept only where other copper is within `p.reach` of it, minus the
+    stretches where the slot would come closer than `p.keepout` to any copper or hole, and cut at the board edge (a slot that reaches
+    the edge leaves it open). A curve that closes on itself would cut the HV island out of the board: it is dropped and reported."""
+    _check(len(hv) > 0, "No island is marked as high-voltage")
+    _check(tool_dia > 0 and p.offset > 0 and p.reach > 0 and p.keepout >= 0, "Tool, offset and reach must be positive")
+    warnings: list = []
+    r = tool_dia / 2
+    if p.offset - r < p.keepout - 1e-9:
+        warnings.append(f"Offset {p.offset:g} mm leaves only {p.offset - r:.2f} mm between the slot edge and the HV copper "
+                        f"(wanted {p.keepout:g} mm): increase the offset or use a thinner tool")
+    base = geom.union(hv)
+    curves = [np.vstack([l, l[:1]]) for l in geom.offset(base, p.offset)]
+    low = geom.union(others) if others else []
+    if low:
+        curves = geom.clip_open(curves, geom.offset(low, p.reach), True)
+    else:
+        curves = []
+    obstacles = list(low) + [geom.circle(x, y, d / 2) for x, y, d in holes]
+    if obstacles:
+        curves = geom.clip_open(curves, geom.offset(geom.union(obstacles), r + p.keepout), False)
+    outer, inner = board
+    curves = geom.clip_open(curves, [np.asarray(outer)], True)
+    if inner:
+        curves = geom.clip_open(curves, [np.asarray(i) for i in inner], False)
+    out, loops = [], 0
+    for c in curves:
+        c = np.asarray(c)
+        if len(c) >= 4 and np.hypot(*(c[0] - c[-1])) < 1e-3:
+            loops += 1
+        elif geom.path_length(c) >= max(2 * tool_dia, 1.0):
+            out.append(c)
+    if loops:
+        warnings.append(f"{loops} slot(s) would close around an HV island and cut it out of the board: draw those by hand, leaving the "
+                        "island attached somewhere")
+    if not out:
+        warnings.append("No slot suggested: nowhere is low-voltage copper within reach of the HV copper at that offset, or there is no room")
+    return out, warnings
+
+
+def _pocket(area, step: float) -> list:
+    """Concentric loops of `area`, then one last shallower pass for what is narrower than two steps."""
+    out, cur = [], geom.clean(area)
+    for _ in range(400):
+        if not cur:
+            break
+        out += cur
+        nxt = geom.clean(geom.offset(cur, -step))
+        if not nxt:
+            for f in np.arange(0.95, 0.05, -0.05):
+                nxt = geom.clean(geom.offset(cur, -f * step))
+                if nxt:
+                    out += nxt
+                    break
+            break
+        cur = nxt
+    return out
+
+
+def slots(paths, p: SlotParams, origin=(0.0, 0.0), name: str = "Slots", copper=None, holes=None, board=None) -> CamResult:
+    """G-code that cuts each polyline of `paths` through the board. With a slot wider than the tool the strip is pocketed with
+    concentric passes. The optional `copper` (contours), `holes` ((x, y, dia)) and `board` ((outer, inner)) only produce warnings and
+    red marks where a slot touches copper (closer than p.keepout), a hole, or leaves the board."""
+    _check(len(paths) > 0, "There are no slots: draw some or ask for a suggestion")
+    _check(p.tool_dia > 0, "Tool diameter must be positive")
+    _check(p.cut_z < 0 and p.step > 0, "Depth must be negative and step-down positive")
+    _check(p.travel_z > 0 and p.feed > 0 and p.plunge > 0, "Safe Z and feed rates must be positive")
+    _check(0 <= p.overlap < 1, "Overlap must be between 0 and 99%")
+    width = max(p.width, p.tool_dia)
+    res = CamResult(kind="slots", name=name, tool_dia=width, origin=(float(origin[0]), float(origin[1])))
+    r = p.tool_dia / 2
+    polys = [np.asarray(q, dtype=float) for q in paths]
+    if width < 1.0:
+        res.warnings.append(f"Slot width {width:g} mm is under 1 mm: standards often do not count the walls of a narrower slot for creepage")
+    if width > 3 * p.tool_dia:
+        res.warnings.append("The slot is much wider than the tool: it will take many passes")
+    swept = geom.union([s for q in polys for s in geom.stroke(q, width)])
+    if copper is not None or holes:
+        forbidden = geom.offset(geom.union(list(copper or []) + [geom.circle(x, y, d / 2) for x, y, d in (holes or [])]),
+                                max(p.keepout - 0.01, 0.0))          # 10 µm of tolerance: suggestions sit exactly at the keep-out
+        hit = [m for m in geom.intersection(swept, forbidden) if abs(geom.area(m)) > 1e-4]
+        if hit:
+            res.marks = hit
+            res.warnings.append(f"{len(hit)} place(s) where a slot comes closer than {p.keepout:g} mm to copper or a hole "
+                                "(shown in red): move the slot or reduce the width")
+    if board is not None:
+        outside = geom.difference(swept, [np.asarray(board[0])])
+        outside = [m for m in outside if abs(geom.area(m)) > 0.05 * width * width]
+        if outside:
+            res.warnings.append("Part of a slot lies outside the board outline")
+    w = _Writer(origin, f"Slots, tool {p.tool_dia:g} mm, width {width:g} mm", p.spindle, p.travel_z, p.mirror_x)
+    w.start()
+    depths, z = [], 0.0
+    while z > p.cut_z + 1e-9:
+        z = max(z - p.step, p.cut_z)
+        depths.append(z)
+    step = 2 * r * (1 - p.overlap)
+    cur = np.asarray(origin, dtype=float)
+    for q in geom.order_nearest(polys, cur, closed=False):
+        if p.mirror_x is not None:
+            q = _flip(q, p.mirror_x)
+        res.paths.append((q, False))
+        if width <= p.tool_dia + 1e-6:                       # one pass along the centre line, back and forth
+            w.lift()
+            w.rapid_xy(q[0])
+            fwd = True
+            for z in depths:
+                w.feed_z(z, p.plunge)
+                for pt in (q[1:] if fwd else q[-2::-1]):
+                    w.feed_xy(pt, p.feed)
+                fwd = not fwd
+        else:                                                # wider: pocket the strip, tool kept inside it
+            region = geom.offset(geom.stroke(q, width), -r)
+            for loop in _pocket(region, step):
+                for z in depths:
+                    w.lift()
+                    w.rapid_xy(loop[0])
+                    w.feed_z(z, p.plunge)
+                    for pt in loop[1:]:
+                        w.feed_xy(pt, p.feed)
+                    w.feed_xy(loop[0], p.feed)
+    w.end()
+    if p.mirror_x is not None:
+        res.marks = [_flip(m, p.mirror_x) for m in res.marks]
     res.gcode, res.length, res.time_s = w.text(), w.cut_len, w.time
     return res
 

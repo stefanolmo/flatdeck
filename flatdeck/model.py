@@ -64,9 +64,20 @@ def sniff_kind(path: str, text: str) -> str:
     return "gerber" if os.path.splitext(path)[1].lower() in GERBER_EXT else "drill"
 
 
+@dataclass
+class Slot:
+    """A slot centre line (open polyline, CAD coordinates), drawn by hand or suggested."""
+    pts: np.ndarray
+    auto: bool = False
+
+    def length(self) -> float:
+        return geom.path_length(self.pts)
+
+
 class Project:
     def __init__(self):
         self.layers: list[Layer] = []
+        self.slots: list[Slot] = []
         self.origin_mode = "board"          # board: lower-left corner of everything loaded | file: coordinates as in the files
 
     # ----- loading
@@ -148,7 +159,7 @@ class Project:
                 closed, opened = outline_loops(l.gerber.strokes)
                 if closed:
                     closed.sort(key=lambda a: -abs(geom.area(a)))
-                    note = f"{len(opened)} tratti aperti ignorati" if opened else ""
+                    note = f"{len(opened)} open outline chain(s) ignored" if opened else ""
                     return closed[0], closed[1:], note
         b = self.bounds()
         if b is None:
@@ -181,6 +192,39 @@ class Project:
         sel = self.hv_indices(layer)
         return [p for i, isl in enumerate(layer.islands()) if (i in sel) == hv for p in isl.paths()]
 
+    # ----- slots between high-voltage and low-voltage copper
+    def add_slot(self, pts, auto: bool = False) -> Slot:
+        s = Slot(np.asarray(pts, dtype=float).copy(), auto)
+        self.slots.append(s)
+        return s
+
+    def clear_slots(self, auto_only: bool = False) -> None:
+        self.slots = [s for s in self.slots if auto_only and not s.auto]
+
+    def slot_obstacles(self):
+        """(HV contours, other copper contours, holes) over every copper layer: a slot cuts through the whole board."""
+        hv, others, holes = [], [], []
+        for l in self.data_layers():
+            if l.kind == "copper" and l.gerber is not None:
+                hv += self.hv_paths(l, True)
+                others += self.hv_paths(l, False)
+            if l.drill is not None:
+                holes += [(float(x), float(y), t.dia) for t in l.drill.tools.values() for x, y in t.holes]
+        return hv, others, holes
+
+    def all_copper(self) -> list:
+        return [q for l in self.data_layers() if l.kind == "copper" and l.gerber is not None for q in l.gerber.polys]
+
+    def suggest_slots(self, tool_dia: float, p: cam.AutoSlotParams) -> list:
+        """Replace the suggested slots (hand-drawn ones stay). Returns the warnings."""
+        hv, others, holes = self.slot_obstacles()
+        outer, inner, _ = self.board_outline()
+        paths, warnings = cam.auto_slots(hv, others, holes, (outer, inner), tool_dia, p)
+        self.clear_slots(auto_only=True)
+        for q in paths:
+            self.add_slot(q, auto=True)
+        return warnings
+
     # ----- transforms (all data layers together, so they stay registered)
     def _centre(self):
         b = self.board_bounds()
@@ -207,4 +251,6 @@ class Project:
                 for t in l.drill.tools.values():
                     t.holes = fn(t.holes) if len(t.holes) else t.holes
                     t.slots = [fn(s) for s in t.slots]
+        for s in self.slots:
+            s.pts = fn(s.pts)
         self.layers = [l for l in self.layers if l.kind != "job"]   # generated G-code is now out of date
