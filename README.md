@@ -16,6 +16,10 @@ Load the generated G-code in CNC Deck (or Candle, UGS…) to send it to the mach
 flatdeck examples/TrafficLight_copperTop.gtl examples/TrafficLight_copperBottom.gbl examples/TrafficLight_contour.gm1 examples/TrafficLight_drill.txt
 ```
 
+If the installer seems stuck: PySide6 is about 100 MB, so a slow connection looks like a freeze (a progress bar is shown). Run it with
+`FLATDECK_VERBOSE=1 ./install.sh` to see every step; `FLATDECK_SKIP_APT=1` skips the `apt` step, `PYTHON=python3.12` picks another Python.
+The package is built from a clean copy of the sources, so big folders next to them (such as a `.venv`) do not slow it down.
+
 Without installing: `pip install -r requirements.txt && python3 -m flatdeck`.
 Options: `--no-splash` (or `FLATDECK_NO_SPLASH=1`) skips the 3-second splash screen.
 
