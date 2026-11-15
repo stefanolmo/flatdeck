@@ -89,9 +89,10 @@ class SlotParams:
 
 @dataclass
 class AutoSlotParams:
-    offset: float = 2.0             # distance from the HV copper edge to the slot centre line
-    reach: float = 6.0              # keep only where low-voltage copper is within this distance of the slot centre line
+    offset: float = 0.0             # distance from the HV copper edge to the slot centre line; 0 = the middle of the narrowest gap
+    reach: float = 0.0              # keep only where low-voltage copper is within this distance of the slot centre line; 0 = automatic
     keepout: float = 0.5            # smallest distance between the slot edge and copper / holes
+    smooth: float = 8.0             # close the gaps of the HV zone up to twice this (pads of one row become one band); 0 = off
 
 
 @dataclass
@@ -639,67 +640,88 @@ def narrowest_gap(hv, others, limit: float = 40.0) -> float | None:
 def auto_slots(hv, others, holes, board, tool_dia: float, p: AutoSlotParams):
     """Suggest slot centre lines that separate the HV copper from the low-voltage copper. All copper layers count (the slot cuts
     through the board): `hv` and `others` are contours of the HV islands and of the remaining copper of every layer, `holes` the
-    drilled (x, y, dia) and `board` = (outer loop, inner loops). Returns (list of open polylines, warnings).
+    drilled (x, y, dia) and `board` = (outer loop, inner loops). Returns (list of open polylines, messages).
 
-    The centre line is the curve at `p.offset` from the HV copper, kept only where other copper is within `p.reach` of it, minus the
-    stretches where the slot would come closer than `p.keepout` to any copper or hole, and cut at the board edge (a slot that reaches
-    the edge leaves it open). A curve that closes on itself would cut the HV island out of the board: it is dropped and reported."""
+    The centre line is the curve at `p.offset` from the HV copper (0 = automatic: the middle of the narrowest gap), kept only where
+    other copper is within `p.reach` of it, minus the stretches where the slot would come closer than `p.keepout` to any copper or
+    hole, and cut at the board edge (a slot that reaches the edge leaves it open). A curve that closes on itself would cut the HV
+    island out of the board: it is dropped and reported. Messages starting with "Note:" are information, the others are problems."""
     _check(len(hv) > 0, "No island is marked as high-voltage")
-    _check(tool_dia > 0 and p.offset > 0 and p.reach > 0 and p.keepout >= 0, "Tool, offset and reach must be positive")
-    warnings: list = []
+    _check(tool_dia > 0 and p.offset >= 0 and p.reach >= 0 and p.keepout >= 0, "Tool and reach must be positive")
+    msgs: list = []
     r = tool_dia / 2
-    if p.offset - r < p.keepout - 1e-9:
-        warnings.append(f"Offset {p.offset:g} mm leaves only {p.offset - r:.2f} mm between the slot edge and the HV copper "
-                        f"(wanted {p.keepout:g} mm): increase the offset or use a thinner tool")
+    need = tool_dia + 2 * p.keepout
+    if p.smooth > 0:                                           # the HV zone as one shape: pads of a row and their traces merge, so the
+        hv = geom.offset(geom.offset(geom.union(hv), p.smooth), -p.smooth)   # slot is a smooth line instead of a scallop around each pad
+    gap = narrowest_gap(hv, others)
+    if gap is None:
+        return [], ["No slot suggested: there is no low-voltage copper near the HV copper"]
+    offset = p.offset
+    if offset <= 0:                                            # automatic: the middle of the narrowest gap
+        offset = max(gap / 2, r + p.keepout)
+        msgs.append(f"Note: offset chosen automatically: {offset:.2f} mm (the middle of the narrowest gap, {gap:.2f} mm)")
+    elif offset - r < p.keepout - 1e-9:
+        msgs.append(f"Offset {offset:g} mm leaves only {max(offset - r, 0):.2f} mm between the slot edge and the HV copper "
+                    f"(wanted {p.keepout:g} mm): increase the offset (at least {r + p.keepout:g} mm) or use a thinner tool")
+    reach = p.reach if p.reach > 0 else max(2 * gap - offset, gap)       # automatic: where HV and low-voltage copper are up to 2 gaps apart
     base = geom.union(hv)
-    curves = [np.vstack([l, l[:1]]) for l in geom.offset(base, p.offset)]
-    low = geom.union(others) if others else []
-    if low:
-        curves = geom.clip_open(curves, geom.offset(low, p.reach), True)
-    else:
-        curves = []
+    curves = [np.vstack([l, l[:1]]) for l in geom.offset(base, offset)]
+    low = geom.union(others)
+    curves = geom.clip_open(curves, geom.offset(low, reach), True)
     facing = sum(geom.path_length(c) for c in curves)          # the stretch that faces low-voltage copper
     obstacles = list(low) + [geom.circle(x, y, d / 2) for x, y, d in holes]
-    if obstacles:
-        curves = geom.clip_open(curves, geom.offset(geom.union(obstacles), r + p.keepout), False)
+    curves = geom.clip_open(curves, geom.offset(geom.union(obstacles), r + p.keepout), False)
     roomy = sum(geom.path_length(c) for c in curves)
     outer, inner = board
     curves = geom.clip_open(curves, [np.asarray(outer)], True)
     if inner:
         curves = geom.clip_open(curves, [np.asarray(i) for i in inner], False)
-    out, loops = [], 0
+    out, loops, short = [], 0, 0
     for c in curves:
         c = np.asarray(c)
         if len(c) >= 4 and np.hypot(*(c[0] - c[-1])) < 1e-3:
             loops += 1
         elif geom.path_length(c) >= max(2 * tool_dia, 1.0):
             out.append(c)
-    if loops:
-        warnings.append(f"{loops} slot(s) would close around an HV island and cut it out of the board: draw those by hand, leaving the "
-                        "island attached somewhere")
-    if facing > 0 and roomy < 0.98 * facing or not out:
-        gap = narrowest_gap(hv, others)
-        need = tool_dia + 2 * p.keepout
-        if gap is None:
-            warnings.append("No slot suggested: there is no low-voltage copper near the HV copper")
         else:
-            fits = max(gap - 2 * p.keepout, 0.0)
-            if gap < tool_dia:
-                how = (f"The tool ({tool_dia:g} mm) is wider than that gap: use one of at most {fits:.2f} mm (keeping {p.keepout:g} mm to the "
-                       "copper on each side), or draw the slot by hand (hand-drawn slots are only checked and marked in red)")
-            else:
-                how = (f"A slot made with a {tool_dia:g} mm tool and a {p.keepout:g} mm keep-out needs {need:.2f} mm: use a tool of at most "
-                       f"{fits:.2f} mm, or reduce the keep-out to {(gap - tool_dia) / 2:.2f} mm, or draw the slot by hand "
-                       "(hand-drawn slots are only checked and marked in red)")
-            if gap + 1e-6 >= need:
-                how = (f"The gap is wide enough for the tool (it needs {need:.2f} mm): check the offset (about {gap / 2:.2f} mm puts the slot "
-                       "in the middle of the narrowest gap) and the reach")
-            if not out:
-                warnings.append(f"No slot suggested. The narrowest gap between the HV copper and the low-voltage copper is {gap:.2f} mm. {how}")
-            else:
-                warnings.append(f"Only {roomy:.0f} of {facing:.0f} mm of the HV edge that faces low-voltage copper has room for a slot "
-                                f"at this offset: the narrowest gap is {gap:.2f} mm. {how}")
-    return out, warnings
+            short += 1
+    if loops:
+        msgs.append(f"{loops} slot(s) would close around an HV island and cut it out of the board: draw those by hand, leaving the "
+                    "island attached somewhere")
+    lo, hi = r + p.keepout, gap - r - p.keepout                # the offsets at which the slot fits the narrowest gap
+    if gap < tool_dia:
+        fit = (f"The tool ({tool_dia:g} mm) is wider than that gap: use one of at most {max(gap - 2 * p.keepout, 0):.2f} mm "
+               f"(keeping {p.keepout:g} mm to the copper on each side), or draw the slot by hand (hand-drawn slots are only checked "
+               "and marked in red)")
+    elif gap < need:
+        fit = (f"A slot made with a {tool_dia:g} mm tool and a {p.keepout:g} mm keep-out needs {need:.2f} mm: use a tool of at most "
+               f"{max(gap - 2 * p.keepout, 0):.2f} mm, or reduce the keep-out to {(gap - tool_dia) / 2:.2f} mm, or draw the slot by hand "
+               "(hand-drawn slots are only checked and marked in red)")
+    else:
+        fit = (f"For this tool and keep-out the offset has to be between {lo:.2f} and {hi:.2f} mm at the narrowest gap "
+               f"({gap / 2:.2f} mm is the middle; 0 = automatic)")
+    if not out:
+        head = f"No slot suggested. The narrowest gap between the HV copper and the low-voltage copper is {gap:.2f} mm."
+        if gap < need:
+            msgs.append(f"{head} {fit}")
+        elif not lo - 1e-6 <= offset <= hi + 1e-6:
+            msgs.append(f"{head} At offset {offset:.2f} mm the slot would touch copper along that gap. {fit}")
+        elif facing == 0:
+            d = abs(gap - offset)
+            msgs.append(f"{head} At offset {offset:.2f} mm the slot centre line is about {d:.1f} mm from the low-voltage copper there, "
+                        f"farther than the reach ({reach:g} mm): raise the reach to at least {math.ceil(d)} mm, or set it to 0 (automatic). {fit}")
+        elif roomy == 0 or facing == 0:
+            msgs.append(f"{head} {fit}")
+        elif roomy > 0 and sum(geom.path_length(np.asarray(c)) for c in curves) == 0 and not loops and not short:
+            msgs.append(f"{head} What fits lies outside the board outline: check that the outline file covers the HV zone")
+        elif short:
+            msgs.append(f"{head} {short} stretch(es) that fit are shorter than {max(2 * tool_dia, 1.0):g} mm and were dropped")
+        elif not loops:
+            msgs.append(f"{head} {fit}")
+    elif roomy < 0.98 * facing:
+        msgs.append(f"Only {roomy:.0f} of {facing:.0f} mm of the HV edge that faces low-voltage copper has room for a slot at this "
+                    f"offset: the narrowest gap is {gap:.2f} mm. {fit}")
+    return out, msgs
 
 
 def _pocket(area, step: float) -> list:

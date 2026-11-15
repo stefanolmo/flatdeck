@@ -395,9 +395,13 @@ class MainWindow(QMainWindow):
         self.slot_dia = self._field("slot_dia", dspin(0.5, 10, 2.0, 2, " mm", 0.5))
         self.slot_width = self._field("slot_width", dspin(0, 30, 0, 2, " mm", 0.5))
         self.slot_width.setSpecialValueText("as the tool")
-        self.slot_offset = self._field("slot_offset", dspin(0.1, 50, 1.5, 2, " mm", 0.25))
-        self.slot_reach = self._field("slot_reach", dspin(0.5, 100, 6, 1, " mm"))
+        self.slot_offset = self._field("slot_offset", dspin(0, 50, 0, 2, " mm", 0.25))
+        self.slot_offset.setSpecialValueText("automatic")
+        self.slot_reach = self._field("slot_reach", dspin(0, 100, 0, 1, " mm"))
+        self.slot_reach.setSpecialValueText("automatic")
         self.slot_keep = self._field("slot_keep", dspin(0, 10, 0.5, 2, " mm", 0.1))
+        self.slot_smooth = self._field("slot_smooth", dspin(0, 50, 8, 1, " mm"))
+        self.slot_smooth.setSpecialValueText("off")
         self.slot_suggest = QPushButton("Suggest slots from the HV islands")
         self.slot_suggest.clicked.connect(self.suggest_slots)
         self.slot_draw = QPushButton("Draw a slot in the view")
@@ -419,7 +423,8 @@ class MainWindow(QMainWindow):
         row.addWidget(clr)
         c.body.addLayout(row)
         self._form(c, [("Flat end mill Ø", self.slot_dia), ("Slot width", self.slot_width), ("Offset from HV copper", self.slot_offset),
-                       ("Reach to low voltage", self.slot_reach), ("Keep-out from copper", self.slot_keep)])
+                       ("Reach to low voltage", self.slot_reach), ("Keep-out from copper", self.slot_keep),
+                       ("Smooth HV outline", self.slot_smooth)])
         self.slot_depth = self._field("slot_depth", dspin(0.1, 20, 1.8, 2, " mm", 0.1))
         self.slot_step = self._field("slot_step", dspin(0.05, 10, 0.6, 2, " mm", 0.1))
         self.slot_overlap = self._field("slot_overlap", dspin(0, 90, 20, 0, " %"))
@@ -516,7 +521,8 @@ class MainWindow(QMainWindow):
     def suggest_slots(self) -> None:
         try:
             warnings = self.project.suggest_slots(self.slot_dia.value(), cam.AutoSlotParams(
-                offset=self.slot_offset.value(), reach=self.slot_reach.value(), keepout=self.slot_keep.value()))
+                offset=self.slot_offset.value(), reach=self.slot_reach.value(), keepout=self.slot_keep.value(),
+                smooth=self.slot_smooth.value()))
         except ValueError as e:
             QMessageBox.information(self, APP_NAME, f"{e}.\nMark the HV copper first (High voltage tab, Pick islands in the view)."
                                     if "high-voltage" in str(e) else str(e))
@@ -526,7 +532,7 @@ class MainWindow(QMainWindow):
         for msg in warnings:
             self._log(f"  ⚠ {msg}")
         self._refresh_slots()
-        if warnings:                                        # never leave the user with an empty result and no reason
+        if warnings and (not n or any(not m.startswith("Note:") for m in warnings)):   # never leave an empty result without a reason
             QMessageBox.information(self, APP_NAME, ("No slot could be suggested." if not n else f"{n} slot(s) suggested.") + "\n\n" + "\n\n".join(warnings))
 
     def gen_slots(self) -> None:
@@ -628,10 +634,12 @@ class MainWindow(QMainWindow):
             self.slot_dia: "Flat end mill used to cut the slots, usually 1 to 3 mm. The slot is at least as wide as the tool.",
             self.slot_width: "Slot width. 'As the tool' = a single pass along the centre line. A larger value pockets the strip with several passes.\n"
                              "Standards often count the walls of a slot for creepage only above ~1 mm of width: check the one that applies.",
-            self.slot_offset: "Suggested slots: distance from the edge of the HV copper to the slot centre line. With the 2 mm tool and a 0.5 mm keep-out it must be at least 1.5 mm.\n"
-                              "A natural choice is half the clearance of the HV band.",
-            self.slot_reach: "Suggested slots: keep a stretch only where low-voltage copper is within this distance of the slot centre line.\n"
-                             "Where the HV copper has nothing near it, no slot is needed (and it would only weaken the board).",
+            self.slot_offset: "Suggested slots: distance from the edge of the HV copper to the slot centre line. 'automatic' puts it in the middle of the narrowest\n"
+                              "gap between HV and low-voltage copper. A number must be at least tool radius + keep-out, and leave the same distance to the other copper.",
+            self.slot_reach: "Suggested slots: keep a stretch only where low-voltage copper is within this distance of the SLOT CENTRE LINE (not of the HV copper).\n"
+                             "Where nothing is that near, no slot is needed (it would only weaken the board, or close around the island). 'automatic' = 2 x the narrowest gap - offset.",
+            self.slot_smooth: "Suggested slots: treat the HV zone as one shape by closing the gaps between its pads and traces up to twice this value, so the slot is\n"
+                              "a smooth line along a row of pads instead of a scallop around each one. Too large and it also swallows low-voltage copper inside the zone. 'off' = follow every pad.",
             self.slot_keep: "Smallest distance wanted between the slot edge and any copper or hole. Suggestions respect it; slots you draw are checked against it (red marks).",
             self.slot_depth: "Cut depth below the copper surface (positive number): board thickness + ~0.2 mm to go through.",
             self.slot_step: "Depth removed per pass. The cut is repeated, back and forth, until the full depth is reached.",

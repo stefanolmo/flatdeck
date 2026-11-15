@@ -362,14 +362,91 @@ def test_fancoil_upper_part_as_hv_explains_why_a_wide_tool_does_not_fit(app, tmp
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
     w.slot_dia.setValue(3.0)
     w.slot_offset.setValue(2.0)
+    w.slot_reach.setValue(6)
+    w.slot_smooth.setValue(0)
     w.suggest_slots()
     assert not w.project.slots and shown and "No slot could be suggested" in shown[0]
     assert "2.51 mm" in shown[0] and "at most 1.51 mm" in shown[0] and "2.51" in w.messages.toPlainText()
     w.slot_dia.setValue(1.5)
     w.slot_offset.setValue(1.5)
+    w.slot_reach.setValue(6)
+    w.slot_smooth.setValue(0)
     shown.clear()
     w.suggest_slots()
     assert w.project.slots and sum(s.length() for s in w.project.slots) > 50
     w.gen_slots()
     assert w.project.jobs()[-1].job.kind == "slots"
+    w.close()
+
+
+def wide_layout(gap=6.81):
+    hv = [geom.circle(5, y, 2.0) for y in (5, 10, 15)] + geom.stroke(np.array([[5.0, 5], [5, 15]]), 1.0)
+    low = [geom.circle(5 + 2 + gap + 1.5, y, 1.5) for y in (5, 10, 15)]
+    return hv, low, (np.array([[0, 0], [60, 0], [60, 20], [0, 20.0]]), [])
+
+
+def test_automatic_offset_puts_the_slot_in_the_middle_of_the_narrowest_gap():
+    hv, low, board = wide_layout()
+    paths, msgs = cam.auto_slots(hv, low, [], board, 3.0, cam.AutoSlotParams(offset=0, keepout=0.5))
+    assert len(paths) == 1 and len(msgs) == 1 and msgs[0].startswith("Note: offset chosen automatically: 3.41 mm")
+    xs = np.vstack(paths)[:, 0]
+    assert abs(xs.max() - (7 + 3.405)) < 0.05                                 # the slot centre line, mid-way between x=7 and x=13.81
+    hv2, low2 = layout(gap_pad=3.5)
+    p2, m2 = cam.auto_slots(hv2, low2, [], BOARD, 2.0, cam.AutoSlotParams(offset=0, keepout=0.5))
+    assert p2 and "1.75 mm" in m2[0]
+    # when the gap is too narrow for the tool the automatic offset cannot help: the explanation comes with the numbers
+    p3, m3 = cam.auto_slots(hv2, low2, [], BOARD, 3.5, cam.AutoSlotParams(offset=0, keepout=0.5))
+    assert not p3 and any("at most" in m for m in m3)
+
+
+def test_each_reason_for_an_empty_suggestion_is_named():
+    hv, low, board = wide_layout()
+    P = lambda o, reach=0: cam.auto_slots(hv, low, [], board, 3.0, cam.AutoSlotParams(offset=o, reach=reach, keepout=0.5, smooth=0))[1]
+    reach = P(3.4, reach=1)
+    assert "reach" in reach[-1] and "at least 4 mm" in reach[-1]
+    far = P(6.5)
+    assert "would touch copper along that gap" in far[-1] and "between 2.00 and 4.81" in far[-1]
+    near = P(1.5)
+    assert any("increase the offset (at least 2 mm)" in m for m in near)
+    # the slot would lie outside the board outline
+    off_board = cam.auto_slots(hv, low, [], (np.array([[40, 0], [60, 0], [60, 20], [40, 20.0]]), []), 3.0, cam.AutoSlotParams(offset=0, keepout=0.5))
+    assert not off_board[0] and any("outside the board outline" in m for m in off_board[1])
+
+
+def test_ui_defaults_are_automatic_offset_and_a_generous_reach(app, tmp_path):
+    from PySide6.QtCore import QSettings
+    from flatdeck.mainwindow import MainWindow
+    QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path))
+    w = MainWindow()
+    assert w.slot_offset.value() == 0 and w.slot_offset.specialValueText() == "automatic"
+    assert w.slot_reach.value() == 0 and w.slot_reach.specialValueText() == "automatic"
+    assert "SLOT CENTRE LINE" in w.slot_reach.toolTip()
+    w.close()
+
+
+def test_fancoil_whole_upper_part_as_hv_works_with_every_default(app, tmp_path, monkeypatch):
+    """The reported 6.81 mm case: all three rows of pads and their traces are HV. Automatic offset, reach and smoothing: one clean line."""
+    from PySide6.QtCore import QSettings
+    from flatdeck.mainwindow import MainWindow
+    QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path))
+    w = MainWindow()
+    w.show()
+    w.load_file(os.path.join(EX, "BoardFancoil_copperBottom.gbl"))
+    lay = w.project.layers[0]
+    for i in lay.islands():
+        if i.outer[:, 1].mean() > 33:
+            w.project.toggle_hv(lay, *i.outer[0])
+    assert len(w.project.hv_indices(lay)) == 12
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+    for tool in (2.0, 3.0):
+        w.slot_dia.setValue(tool)
+        w.suggest_slots()
+        total = sum(s.length() for s in w.project.slots)
+        assert 2 <= len(w.project.slots) <= 3 and total > 50, (tool, total)
+        assert not shown                                                       # nothing to complain about: only the "Note:" about the offset
+        assert "offset chosen automatically: 3.4" in w.messages.toPlainText()
+    w.gen_slots()
+    job = w.project.jobs()[-1].job
+    assert job.kind == "slots" and not job.marks and not any("closer than" in m for m in job.warnings)
     w.close()

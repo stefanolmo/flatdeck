@@ -100,15 +100,19 @@ traces (click again to unmark). Marked islands turn red. Mark the same net again
 A slot cut through the board lengthens the creepage path between the two zones. Open the **Slots** tab:
 
 - **Suggest slots from the HV islands** uses the islands you marked in the *High voltage* tab (on **both** copper layers: the slot cuts
-  through the whole board). The slot centre line is the curve at *Offset from HV copper* from the HV edge, kept only where low-voltage
-  copper is within *Reach to low voltage* of it, minus the stretches that would come closer than the *Keep-out from copper* to any
-  copper (both layers) or hole, and cut at the board edge: a slot that reaches the edge leaves it open. A natural offset is half of
-  the clearance of the HV band (with the default 2 mm tool and 0.5 mm keep-out it must be at least 1.5 mm).
+  through the whole board). The HV zone is first treated as one shape (*Smooth HV outline*: the gaps between the pads of a row close,
+  so the slot is a smooth line instead of a scallop around every pad). The slot centre line is the curve at *Offset from HV copper*
+  from its edge, kept only where low-voltage copper is within *Reach to low voltage* of it, minus the stretches that would come
+  closer than the *Keep-out from copper* to any copper (both layers) or hole, and cut at the board edge: a slot that reaches the
+  edge leaves it open. **Offset and reach are automatic by default**: the offset is the middle of the narrowest gap between HV and
+  low-voltage copper (at least tool radius + keep-out), the reach is twice that gap. The offset of a number you type has to leave the
+  keep-out on both sides: for a 3 mm tool and a 0.5 mm keep-out in a 6.81 mm gap it has to be between 2.00 and 4.81 mm.
 - **Nothing suggested?** The slot has to fit between the HV copper and the other copper: it needs the tool diameter plus the keep-out on
   each side. When it does not, FlatDeck tells you (message box and Messages tab) the narrowest gap it found and the largest tool that
   would fit, for example on `examples/BoardFancoil_copperBottom.gbl` with the upper part marked as HV the gap is 2.51 mm: a 2 mm tool
   needs 3.0 mm with the default 0.5 mm keep-out, so only a tool of up to 1.51 mm (or a smaller keep-out) fits. If only part of the edge
-  has room it says how much. *Reach* is measured from the slot centre line to the low-voltage copper, not from the HV copper.
+  has room it says how much, and names the parameter to change when the cause is the offset, the reach or the board outline. *Reach* is
+  measured from the slot centre line to the low-voltage copper, not from the HV copper.
 - **Draw a slot in the view**: click the points, double-click or Enter to finish, Escape to cancel. The ends snap to the board edge.
   Suggested and drawn slots live in one list (select one to highlight it, remove it, or clear all); a new suggestion replaces only
   the suggested ones.
