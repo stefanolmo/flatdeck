@@ -96,6 +96,20 @@ class AutoSlotParams:
 
 
 @dataclass
+class FrameParams:
+    """Clear ALL the copper between the circuit and the board outline (a floating frame around the circuit could bridge HV and low voltage)."""
+    tool_dia: float = 2.5
+    keep: float = 1.0               # distance kept clear of the board outline (the cut line)
+    overlap: float = 0.2
+    cut_z: float = -0.1
+    travel_z: float = 2.0
+    feed: float = 100.0
+    plunge: float = 40.0
+    spindle: int = 1000
+    mirror_x: float | None = None
+
+
+@dataclass
 class DrillParams:
     drill_z: float = -1.8
     travel_z: float = 2.0
@@ -330,6 +344,82 @@ def rect_clearing(raw: list, r: float, overlap: float):
     reachable = geom.intersection(target, geom.offset(rect, -r))     # where the tool, kept inside the rectangle, can be centred
     side = [np.asarray(l) for l in geom.offset(rect, -r)]            # one loop along the four sides: covers the strip next to them
     return side + clearing_loops(reachable, r, overlap), box, target
+
+
+def frame_clearing(raw: list, r_iso: float, outer, inner, r: float, keep: float, overlap: float):
+    """Tool-centre paths that remove all the copper between the circuit and the board outline, using a tool of radius `r`
+    (the circuit rectangle is the one of `rect_clearing`, built with the isolation tool radius `r_iso`), `keep` away from the outline
+    and from inner cut-outs. Returns ([(path, closed)], rectangle bounds, copper to remove, True when the circuit comes closer to the
+    outline than `keep`).
+    The tool centre stays at least `r` from the circuit and its safety-margin strip (so the disc never touches them, whatever the
+    tool size) and inside the board minus the keep-out; where it can, it runs tangent to those limits."""
+    blob = geom.union(raw[0])                                  # circuit + margin strip + the inner half of the first groove
+    strokes = []
+    for loops in raw:
+        for l in loops:
+            strokes += geom.stroke(np.vstack([l, l[:1]]), 2 * r_iso)
+    done = geom.union(strokes + blob)
+    box = geom.bounds(done)
+    rect = [rect_outline(box, 0.0)]
+    o = np.asarray(outer, dtype=float)
+    board = [o if geom.area(o) > 0 else o[::-1]]
+    limit = geom.offset(board, -keep) if keep > 0 else board
+    if inner:
+        holes = [np.asarray(i) if geom.area(i) > 0 else np.asarray(i)[::-1] for i in inner]
+        limit = geom.difference(limit, geom.offset(holes, keep) if keep > 0 else holes)
+    tight = abs(geom.total_area(geom.difference(rect, limit))) > 1e-3
+    core = geom.offset(blob, -r_iso)                           # the circuit and its safety-margin strip: never to be touched
+    protected = geom.offset(core, r)                           # the tool centre may not enter it
+    target = geom.difference(limit, geom.union(done + rect))
+    inside = geom.offset(limit, -r)                            # the disc stays within the board minus the keep-out
+    reachable = geom.intersection(target, geom.difference(inside, protected))
+    items = []
+    outline_loops = [np.vstack([l, l[:1]]) for l in inside]    # one loop along the outline (and inner cut-outs), outside the circuit
+    for s in geom.clip_open(outline_loops, geom.union(rect + protected), False):
+        s = np.asarray(s)
+        closed = bool(np.hypot(*(s[0] - s[-1])) < 1e-3)
+        items.append((s[:-1] if closed else s, closed))
+    items += [(np.asarray(l), True) for l in clearing_loops(reachable, r, overlap)]
+    return items, box, target, tight
+
+
+def frame(copper, iso: IsolationParams, outer, inner, p: FrameParams, origin=(0.0, 0.0), name: str = "Frame") -> CamResult:
+    """G-code that clears the frame around the circuit of `copper` (whose grooves are those of `iso`)."""
+    _check(p.tool_dia > 0 and p.keep >= 0, "Tool diameter must be positive and the keep-out not negative")
+    _check(p.cut_z < 0 and p.travel_z > 0 and p.feed > 0 and p.plunge > 0, "Depth must be negative; safe Z and feed rates positive")
+    _check(0 <= p.overlap < 1, "Overlap must be between 0 and 99%")
+    r = p.tool_dia / 2
+    res = CamResult(kind="frame", name=name, tool_dia=p.tool_dia, origin=(float(origin[0]), float(origin[1])))
+    raw: list = []
+    isolation_loops(copper, iso, None, None, raw)
+    _check(bool(raw) and bool(raw[0]), "There is no circuit to put a frame around")
+    items, box, target, tight = frame_clearing(raw, iso.tool_dia / 2, outer, inner, r, p.keep, p.overlap)
+    if not items:
+        raise ValueError("Nothing to clear: " + (f"the circuit comes closer than {p.keep:g} mm to the board outline" if tight
+                                                 else "the circuit fills the board outline"))
+    if tight:
+        res.warnings.append(f"The circuit comes closer than {p.keep:g} mm to the board outline: no frame can be cleared there")
+    w = _Writer(origin, f"Frame, tool {p.tool_dia:g} mm, {p.keep:g} mm from the outline", p.spindle, p.travel_z, p.mirror_x)
+    w.start()
+    cur = np.asarray(origin, dtype=float)
+    closed_items = geom.order_nearest([a for a, c in items if c], cur, closed=True)
+    open_items = geom.order_nearest([a for a, c in items if not c], cur, closed=False)
+    for flag, group in ((True, closed_items), (False, open_items)):
+        for q in group:
+            if p.mirror_x is not None:
+                q = _flip(q, p.mirror_x)
+            w.lift()
+            w.rapid_xy(q[0])
+            w.feed_z(p.cut_z, p.plunge)
+            for pt in q[1:]:
+                w.feed_xy(pt, p.feed)
+            if flag:
+                w.feed_xy(q[0], p.feed)
+            res.paths.append((q, flag))
+    w.end()
+    res.warnings.append(f"Frame {abs(geom.total_area(target)):.0f} mm² of copper cleared with {len(items)} pass(es)")
+    res.gcode, res.length, res.time_s = w.text(), w.cut_len, w.time
+    return res
 
 
 def isolation_loops(copper, p: IsolationParams, warnings: list | None = None, marks: list | None = None,

@@ -67,6 +67,18 @@ tool) are cleared with a single plunge each. Limits: a round tool leaves the fou
 fine tool this takes a long time (a 0.8 mm tool on the same board: 1897 mm², about 53 min) (`examples/BoardFancoil_copperBottom.gbl`, 2.5 mm
 tool, 0.2 mm margin: 840 mm² removed, 8.6 → 19.5 min; with a 0.4 mm tool the same board goes from 7.7 to about 85 min).
 
+**Clearing the frame between the circuit and the board outline.** After isolation (even with the rectangle option) the copper between
+the circuit and the board outline is a single floating conductor around everything. For a board with high-voltage tracks that matters: a
+floating conductor in the path is not insulation, so the distance between HV and low-voltage copper through it is only the sum of two
+small bare gaps. The card *Clear the frame around the circuit* (Cut-out tab) removes **all** that copper as a separate job with its
+own bit (flat end mill, 2.5 mm by default: a big one needs no precision and takes minutes instead of hours), staying *Distance from
+the outline* (1 mm) away from the cut line and from inner cut-outs, and never closer than one tool radius to the circuit and its
+*Safety margin* strip, whatever the tool size. The circuit rectangle comes from the settings of the Isolation tab (tool, margin, passes
+of the chosen layer), the same as for the *rectangle* option, so use the same values; the frame needs the outline file. Where the circuit
+is closer to the outline than the keep-out no frame can be cleared and you get a warning (on `examples/TrafficLight_*` that is the case
+at the top and bottom). Run it once per layer, mirrored for the bottom. Which distance is enough for your voltage is for you and the
+standard to decide.
+
 **Traces too thin?** The cutting width is computed from the bit data (V-bit: tip + 2 × depth × tan(angle / 2)); real bits rarely match it
 exactly (the real tip is often wider than declared, wear, runout, a Z zero slightly too deep). Two controls in the Isolation tab:
 *Measured width* (cut a test groove, measure it, type it: it replaces the computed width) and *Safety margin* (the groove is moved away

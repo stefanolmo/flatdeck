@@ -576,7 +576,35 @@ class MainWindow(QMainWindow):
                        ("Tabs", self.co_gaps), ("Tab width", self.co_gapw), ("Safe Z", self.co_travel),
                        ("Feed rate", self.co_feed), ("Plunge rate", self.co_plunge), ("Spindle S", self.co_spindle)])
         c.body.addWidget(self._gen_button("Generate cut-out", self.gen_cutout))
-        return c
+        f = Card("Clear the frame around the circuit")
+        n = QLabel("Removes ALL the copper between the circuit and the board outline, staying away from the cut line: a floating frame "
+                   "around the circuit could bridge high-voltage and low-voltage copper. It uses the circuit rectangle of the Isolation tab "
+                   "(tool, margin and passes, same as the 'rectangle' option) and needs the outline file. Own bit: zero Z again.")
+        n.setObjectName("muted")
+        n.setWordWrap(True)
+        f.body.addWidget(n)
+        self.fr_layer = QComboBox()
+        self.fr_dia = self._field("fr_dia", dspin(0.3, 10, 2.5, 2, " mm", 0.5))
+        self.fr_keep = self._field("fr_keep", dspin(0, 30, 1.0, 1, " mm", 0.5))
+        self.fr_depth = self._field("fr_depth", dspin(0.01, 5, 0.1, 3, " mm", 0.01))
+        self.fr_overlap = self._field("fr_overlap", dspin(0, 90, 20, 0, " %"))
+        self.fr_travel = self._field("fr_travel", dspin(0.5, 50, 2, 1, " mm"))
+        self.fr_feed = self._field("fr_feed", dspin(1, 5000, 100, 0, " mm/min"))
+        self.fr_plunge = self._field("fr_plunge", dspin(1, 2000, 40, 0, " mm/min"))
+        self.fr_spindle = self._field("fr_spindle", ispin(0, 30000, 1000))
+        self.fr_mirror = QCheckBox("Bottom side: mirror in X")
+        self._form(f, [("Copper layer", self.fr_layer), ("Flat end mill Ø", self.fr_dia), ("Distance from the outline", self.fr_keep),
+                       ("Depth", self.fr_depth), ("Overlap", self.fr_overlap), ("Safe Z", self.fr_travel),
+                       ("Feed rate", self.fr_feed), ("Plunge rate", self.fr_plunge), ("Spindle S", self.fr_spindle)])
+        f.body.addWidget(self.fr_mirror)
+        f.body.addWidget(self._gen_button("Generate frame clearing", self.gen_frame))
+        holder = QWidget()
+        v = QVBoxLayout(holder)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(10)
+        v.addWidget(c)
+        v.addWidget(f)
+        return holder
 
     def _set_tooltips(self) -> None:
         """A tooltip on every editable parameter (and on its label)."""
@@ -652,6 +680,17 @@ class MainWindow(QMainWindow):
             self.slot_list: "Suggested and drawn slots. Select one to highlight it in the view.",
             self.slot_suggest: "Suggest slot centre lines between the HV islands you marked and the other copper. They replace earlier suggestions; slots you drew stay.",
             self.slot_draw: "Click the points of a slot in the view: double-click or Enter finishes it, Escape cancels. Ends near the board edge snap to it.",
+            # frame
+            self.fr_layer: "Copper layer whose circuit the frame goes around (its grooves define the rectangle). Run it once per layer.",
+            self.fr_dia: "Large flat end mill that clears the frame: it needs no precision, so a big one is fast (minutes instead of hours).",
+            self.fr_keep: "Distance kept clear of the board outline and of inner cut-outs, so the copper along the cut line stays (the cut-out then goes through it).",
+            self.fr_depth: "Depth below the copper surface (positive number). Just through the copper: ~0.1 mm.",
+            self.fr_overlap: "Overlap between adjacent passes, as a percentage of the tool diameter.",
+            self.fr_travel: "Height above the copper surface for rapid moves.",
+            self.fr_feed: "Cutting speed in the XY plane (mm/min).",
+            self.fr_plunge: "Speed of the vertical move down (mm/min).",
+            self.fr_spindle: "Spindle S value. 0 = do not emit M3/M5.",
+            self.fr_mirror: "Tick for a bottom-side layer: the toolpath is mirrored about the board's vertical axis.",
             # cut-out
             self.co_margin: self.co_margin.toolTip(),
             self.co_dia: "Diameter of the end mill that cuts the board out (e.g. 1 mm). The path runs outside the outline by its radius.",
@@ -778,7 +817,7 @@ class MainWindow(QMainWindow):
         if cur in self.project.layers:
             self.layer_list.setCurrentRow(self.project.layers.index(cur))
         self.layer_list.blockSignals(False)
-        for combo, kinds in ((self.iso_layer, ("copper",)), (self.hv_layer, ("copper",))):
+        for combo, kinds in ((self.iso_layer, ("copper",)), (self.hv_layer, ("copper",)), (self.fr_layer, ("copper",))):
             keep = combo.currentData()
             combo.clear()
             for l in self.project.layers:
@@ -974,6 +1013,24 @@ class MainWindow(QMainWindow):
                 res.warnings.append(note)
             return res
         self._run("cutout", go)
+
+    def gen_frame(self) -> None:
+        lay = self.fr_layer.currentData()
+        if lay is None:
+            QMessageBox.information(self, APP_NAME, "Load a copper layer.")
+            return
+        if not self.project.has_outline():
+            QMessageBox.information(self, APP_NAME, "Load the board outline file: the frame is the copper between the circuit and the outline.")
+            return
+        iso = cam.IsolationParams(tool_dia=self._iso_eff, passes=self.iso_passes.value(), overlap=self.iso_overlap.value() / 100,
+                                  margin=self.iso_margin.value())
+        p = cam.FrameParams(tool_dia=self.fr_dia.value(), keep=self.fr_keep.value(), overlap=self.fr_overlap.value() / 100,
+                            cut_z=-self.fr_depth.value(), travel_z=self.fr_travel.value(), feed=self.fr_feed.value(),
+                            plunge=self.fr_plunge.value(), spindle=self.fr_spindle.value(),
+                            mirror_x=self.project.mirror_axis() if self.fr_mirror.isChecked() else None)
+        name = self._next_name(f"Frame {lay.name}" + (" (mirrored)" if p.mirror_x is not None else ""))
+        copper = lay.gerber.polys
+        self._run("frame", lambda: cam.frame(copper, iso, *self.project.board_outline()[:2], p, self.project.origin(), name))
 
     def save_gcode(self) -> None:
         lay = self._current()
