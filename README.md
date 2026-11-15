@@ -62,8 +62,9 @@ are cleared with 20 extra passes: 8.6 → 11.8 min.
 default, mutually exclusive with the previous one) draws a rectangle whose sides touch the outer edge of the outermost grooves and
 mills away **all** the clad copper inside it that is not circuit: traces, pads and their *Safety margin* strip are never touched, and
 the copper outside the rectangle stays as it is. One loop runs along the four sides, the rest follow the edge of the copper still
-to be removed, so nothing is milled twice. Limits: a round tool leaves the four corners of the rectangle and the sharp inside corners
-between the grooves slightly rounded, and with a fine tool this takes a long time (`examples/BoardFancoil_copperBottom.gbl`, 2.5 mm
+to be removed, so nothing is milled twice. Cusps between the passes (specks of about 0.1 mm where two bands meet, dozens with a fine
+tool) are cleared with a single plunge each. Limits: a round tool leaves the four corners of the rectangle slightly rounded, and with a
+fine tool this takes a long time (a 0.8 mm tool on the same board: 1897 mm², about 53 min) (`examples/BoardFancoil_copperBottom.gbl`, 2.5 mm
 tool, 0.2 mm margin: 840 mm² removed, 8.6 → 19.5 min; with a 0.4 mm tool the same board goes from 7.7 to about 85 min).
 
 **Traces too thin?** The cutting width is computed from the bit data (V-bit: tip + 2 × depth × tan(angle / 2)); real bits rarely match it

@@ -291,11 +291,26 @@ def clearing_loops(regions, r: float, overlap: float) -> list:
         cover = []
         for l in out:
             cover += geom.stroke(np.vstack([l, l[:1]]), 2 * r)
-        rest = [u for u in geom.difference(regions, geom.union(cover)) if abs(geom.area(u)) > 0.01]
+        rest = [u for u in geom.difference(regions, geom.union(cover)) if _significant(u)]
         if not rest:
             break
-        out += concentric(rest)
+        big = []
+        for u in rest:
+            x0, y0, x1, y1 = geom.bounds([u])
+            if math.hypot(x1 - x0, y1 - y0) <= r:        # a speck smaller than the tool radius: one plunge in it is enough
+                isl = islands.Island(np.asarray(u), [])
+                x, y = islands.interior_point(isl, float(np.mean(u[:, 0])), float(np.mean(u[:, 1])))
+                out.append(np.array([[x, y], [x + 0.002, y]]))
+            else:
+                big.append(u)
+        if big:
+            out += concentric(big)
     return out
+
+
+def _significant(u) -> bool:
+    """A leftover piece worth a toolpath: not just a micron-wide sliver of rounding between two strokes."""
+    return abs(geom.area(u)) > 1e-4 and bool(geom.offset([u], -0.005))
 
 
 def rect_clearing(raw: list, r: float, overlap: float):

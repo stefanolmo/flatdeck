@@ -389,3 +389,55 @@ def test_fancoil_rectangle_with_wide_tool_keeps_circuit_and_margin():
     p.load("examples/BoardFancoil_copperBottom.gbl")
     off, on = _rect_check(p.layers[0].gerber.polys, tool=2.5, margin=0.2, rel=0.002)     # what is left: the sharp inside corners a round tool cannot reach
     assert on.time_s < off.time_s * 3                                         # area clearing, not an overlapping spiral over the whole board
+
+
+def _uncut_specks(cu, tool, margin, overlap=0.2):
+    """Pieces of copper inside the rectangle that the job leaves behind (excluding the four rounded corners): real ones only."""
+    from flatdeck import islands
+    par = cam.IsolationParams(tool_dia=tool, margin=margin, overlap=overlap)
+    raw: list = []
+    cam.isolation_loops(cu, par, None, None, raw)
+    loops, box, target = cam.rect_clearing(raw, tool / 2, overlap)
+    cover = []
+    for ls in raw:
+        for l in ls:
+            cover += geom.stroke(np.vstack([l, l[:1]]), tool)
+    for l in loops:
+        cover += geom.stroke(np.vstack([l, l[:1]]), tool)
+    left = geom.difference(target, geom.union(cover))
+    r = tool / 2
+    corners = [cam.rect_outline((cx - r - 0.01, cy - r - 0.01, cx + r + 0.01, cy + r + 0.01), 0.0)
+               for cx, cy in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3]))]
+    out = []
+    for c in islands.split(geom.difference(left, corners)):
+        if abs(geom.area(c.outer)) > 1e-4 and geom.offset([c.outer], -0.005):              # not a micron-wide sliver
+            out.append(c)
+    return out, loops
+
+
+def test_rectangle_leaves_no_specks_between_the_passes_of_a_fine_tool():
+    """Reported: with a fine tool small black dots (~0.1 mm) stayed between the passes. Every tool size on the Fancoil board."""
+    from flatdeck.model import Project
+    p = Project()
+    p.load("examples/BoardFancoil_copperBottom.gbl")
+    cu = p.layers[0].gerber.polys
+    for tool, margin, overlap in ((0.8, 0.1, 0.2), (0.8, 0.1, 0.1), (0.6, 0.1, 0.2), (1.0, 0.1, 0.2)):
+        specks, loops = _uncut_specks(cu, tool, margin, overlap)
+        assert not specks, (tool, margin, overlap, [abs(geom.area(c.outer)) for c in specks][:5])
+        # the specks are cleared by tiny two-point paths (one plunge each) and never touch the circuit or its margin strip
+        tiny = [l for l in loops if len(l) == 2 and geom.path_length(l) < 0.01]
+        assert tiny
+    on = cam.isolate(cu, cam.IsolationParams(tool_dia=0.8, margin=0.1, clear_rect=True))
+    gl = on.gcode.splitlines()
+    assert all(len(l) < 80 for l in gl) and gl[-1] == "M2"
+    from flatdeck import islands
+    protected = islands.split(geom.offset(geom.union(cu), 0.1 + 0.4 - 0.01))
+    for l, _ in on.paths[len(cam.isolate(cu, cam.IsolationParams(tool_dia=0.8, margin=0.1)).paths):]:
+        for q in l:
+            assert not any(isl.contains(*q) for isl in protected)
+
+
+def test_islands_option_also_clears_specks():
+    cu = _pour_with_pad()
+    on = cam.isolate(cu, cam.IsolationParams(tool_dia=0.2, clear_islands=True))
+    assert not any("could not" in w for w in on.warnings)
