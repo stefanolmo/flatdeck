@@ -621,6 +621,21 @@ def cutout(outer, inner, p: CutoutParams, origin=(0.0, 0.0), name: str = "Cut-ou
 
 
 # --------------------------------------------------------------------------- slots
+def narrowest_gap(hv, others, limit: float = 40.0) -> float | None:
+    """Smallest distance between the HV copper and the other copper (bisection on the offset of the HV copper), None if above `limit`."""
+    base, low = geom.union(hv), geom.union(others) if others else []
+    if not low or not geom.intersection(geom.offset(base, limit), low):
+        return None
+    lo, hi = 0.0, limit
+    for _ in range(16):
+        mid = (lo + hi) / 2
+        if geom.intersection(geom.offset(base, mid), low):
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
 def auto_slots(hv, others, holes, board, tool_dia: float, p: AutoSlotParams):
     """Suggest slot centre lines that separate the HV copper from the low-voltage copper. All copper layers count (the slot cuts
     through the board): `hv` and `others` are contours of the HV islands and of the remaining copper of every layer, `holes` the
@@ -643,9 +658,11 @@ def auto_slots(hv, others, holes, board, tool_dia: float, p: AutoSlotParams):
         curves = geom.clip_open(curves, geom.offset(low, p.reach), True)
     else:
         curves = []
+    facing = sum(geom.path_length(c) for c in curves)          # the stretch that faces low-voltage copper
     obstacles = list(low) + [geom.circle(x, y, d / 2) for x, y, d in holes]
     if obstacles:
         curves = geom.clip_open(curves, geom.offset(geom.union(obstacles), r + p.keepout), False)
+    roomy = sum(geom.path_length(c) for c in curves)
     outer, inner = board
     curves = geom.clip_open(curves, [np.asarray(outer)], True)
     if inner:
@@ -660,8 +677,28 @@ def auto_slots(hv, others, holes, board, tool_dia: float, p: AutoSlotParams):
     if loops:
         warnings.append(f"{loops} slot(s) would close around an HV island and cut it out of the board: draw those by hand, leaving the "
                         "island attached somewhere")
-    if not out:
-        warnings.append("No slot suggested: nowhere is low-voltage copper within reach of the HV copper at that offset, or there is no room")
+    if facing > 0 and roomy < 0.98 * facing or not out:
+        gap = narrowest_gap(hv, others)
+        need = tool_dia + 2 * p.keepout
+        if gap is None:
+            warnings.append("No slot suggested: there is no low-voltage copper near the HV copper")
+        else:
+            fits = max(gap - 2 * p.keepout, 0.0)
+            if gap < tool_dia:
+                how = (f"The tool ({tool_dia:g} mm) is wider than that gap: use one of at most {fits:.2f} mm (keeping {p.keepout:g} mm to the "
+                       "copper on each side), or draw the slot by hand (hand-drawn slots are only checked and marked in red)")
+            else:
+                how = (f"A slot made with a {tool_dia:g} mm tool and a {p.keepout:g} mm keep-out needs {need:.2f} mm: use a tool of at most "
+                       f"{fits:.2f} mm, or reduce the keep-out to {(gap - tool_dia) / 2:.2f} mm, or draw the slot by hand "
+                       "(hand-drawn slots are only checked and marked in red)")
+            if gap + 1e-6 >= need:
+                how = (f"The gap is wide enough for the tool (it needs {need:.2f} mm): check the offset (about {gap / 2:.2f} mm puts the slot "
+                       "in the middle of the narrowest gap) and the reach")
+            if not out:
+                warnings.append(f"No slot suggested. The narrowest gap between the HV copper and the low-voltage copper is {gap:.2f} mm. {how}")
+            else:
+                warnings.append(f"Only {roomy:.0f} of {facing:.0f} mm of the HV edge that faces low-voltage copper has room for a slot "
+                                f"at this offset: the narrowest gap is {gap:.2f} mm. {how}")
     return out, warnings
 
 

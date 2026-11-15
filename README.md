@@ -100,6 +100,11 @@ A slot cut through the board lengthens the creepage path between the two zones. 
   copper is within *Reach to low voltage* of it, minus the stretches that would come closer than the *Keep-out from copper* to any
   copper (both layers) or hole, and cut at the board edge: a slot that reaches the edge leaves it open. A natural offset is half of
   the clearance of the HV band (with the default 2 mm tool and 0.5 mm keep-out it must be at least 1.5 mm).
+- **Nothing suggested?** The slot has to fit between the HV copper and the other copper: it needs the tool diameter plus the keep-out on
+  each side. When it does not, FlatDeck tells you (message box and Messages tab) the narrowest gap it found and the largest tool that
+  would fit, for example on `examples/BoardFancoil_copperBottom.gbl` with the upper part marked as HV the gap is 2.51 mm: a 2 mm tool
+  needs 3.0 mm with the default 0.5 mm keep-out, so only a tool of up to 1.51 mm (or a smaller keep-out) fits. If only part of the edge
+  has room it says how much. *Reach* is measured from the slot centre line to the low-voltage copper, not from the HV copper.
 - **Draw a slot in the view**: click the points, double-click or Enter to finish, Escape to cancel. The ends snap to the board edge.
   Suggested and drawn slots live in one list (select one to highlight it, remove it, or clear all); a new suggestion replaces only
   the suggested ones.

@@ -526,6 +526,8 @@ class MainWindow(QMainWindow):
         for msg in warnings:
             self._log(f"  ⚠ {msg}")
         self._refresh_slots()
+        if warnings:                                        # never leave the user with an empty result and no reason
+            QMessageBox.information(self, APP_NAME, ("No slot could be suggested." if not n else f"{n} slot(s) suggested.") + "\n\n" + "\n\n".join(warnings))
 
     def gen_slots(self) -> None:
         if not self.project.slots:

@@ -317,3 +317,59 @@ def test_a_suggested_slot_does_not_trigger_its_own_keepout_warning():
     paths, _ = cam.auto_slots(hv, low, [], BOARD, 2.0, cam.AutoSlotParams(offset=1.5, reach=6, keepout=0.5))
     res = cam.slots(paths, cam.SlotParams(tool_dia=2.0, keepout=0.5), (0, 0), "s", copper=hv + low, holes=[], board=BOARD)
     assert not res.marks and not any("closer than" in w for w in res.warnings)
+
+
+def test_narrowest_gap_is_measured():
+    hv, low = layout(gap_pad=3.5)
+    assert abs(cam.narrowest_gap(hv, low) - 3.5) < 0.02
+    assert cam.narrowest_gap(hv, []) is None
+    assert cam.narrowest_gap(hv, [geom.circle(500, 500, 1)]) is None
+
+
+def test_when_no_slot_fits_the_reason_and_the_numbers_are_given():
+    hv, low = layout(gap_pad=2.5)                                           # 2.5 mm between the copper
+    paths, warn = cam.auto_slots(hv, low, [], BOARD, 3.0, cam.AutoSlotParams(offset=2.0, reach=6, keepout=0.5))
+    assert paths == [] and len(warn) == 1
+    assert "narrowest gap" in warn[0] and "2.50 mm" in warn[0] and "at most 1.50 mm" in warn[0]
+    thin = cam.auto_slots(hv, low, [], BOARD, 1.4, cam.AutoSlotParams(offset=1.25, reach=6, keepout=0.5))
+    assert thin[0] and not thin[1]                                          # a thinner tool does fit, no complaint
+    wide, w2 = cam.auto_slots(hv, low, [], BOARD, 2.4, cam.AutoSlotParams(offset=1.25, reach=6, keepout=0.0))
+    assert wide and not any("wider than that gap" in m for m in w2)                 # no keep-out: a 2.4 mm tool fits a 2.5 mm gap
+    narrow = cam.auto_slots(hv, layout(gap_pad=1.0)[1], [], BOARD, 2.0, cam.AutoSlotParams(offset=1.5, reach=6, keepout=0.5))[1]
+    assert "wider than that gap" in narrow[0]
+
+
+def test_partial_room_is_reported_with_how_much():
+    hv = [geom.circle(10, 10, 2.0), geom.circle(10, 16, 2.0)]
+    low = [geom.circle(16.5, 10, 1.5), geom.circle(15, 16, 1.5)]            # 3 mm gap next to the first pad, 1 mm next to the second
+    paths, warn = cam.auto_slots(hv, low, [], BOARD, 2.0, cam.AutoSlotParams(offset=1.5, reach=6, keepout=0.5))
+    assert paths and any(m.startswith("Only ") and "mm of the HV edge" in m for m in warn)
+
+
+def test_fancoil_upper_part_as_hv_explains_why_a_wide_tool_does_not_fit(app, tmp_path, monkeypatch):
+    """The reported case: the narrowest gap is 2.51 mm, so a 3 mm (or 2 mm with 0.5 keep-out) slot cannot go between the two parts."""
+    from PySide6.QtCore import QSettings
+    from flatdeck.mainwindow import MainWindow
+    QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path))
+    w = MainWindow()
+    w.show()
+    w.load_file(os.path.join(EX, "BoardFancoil_copperBottom.gbl"))
+    lay = w.project.layers[0]
+    for i in lay.islands():
+        if i.outer[:, 1].mean() > 40:
+            w.project.toggle_hv(lay, *i.outer[0])
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+    w.slot_dia.setValue(3.0)
+    w.slot_offset.setValue(2.0)
+    w.suggest_slots()
+    assert not w.project.slots and shown and "No slot could be suggested" in shown[0]
+    assert "2.51 mm" in shown[0] and "at most 1.51 mm" in shown[0] and "2.51" in w.messages.toPlainText()
+    w.slot_dia.setValue(1.5)
+    w.slot_offset.setValue(1.5)
+    shown.clear()
+    w.suggest_slots()
+    assert w.project.slots and sum(s.length() for s in w.project.slots) > 50
+    w.gen_slots()
+    assert w.project.jobs()[-1].job.kind == "slots"
+    w.close()
