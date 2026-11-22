@@ -24,6 +24,26 @@ UI_CHECKS = ("iso_mirror", "iso_clear", "iso_rect", "iso_skip_hv", "dr_mirror", 
 KIND_LABEL = {"copper": "Copper", "outline": "Outline", "silk": "Silkscreen", "mask": "Mask", "drill": "Drill", "job": "G-code"}
 
 
+def make_folder_dialog(parent, title: str, start: str, save: bool) -> QFileDialog:
+    """A dialog that picks a folder with a button saying 'Save' (or 'Open'). The native dialog of the desktop ignores the label and
+    always says 'Open', so the one drawn by Qt is used."""
+    dlg = QFileDialog(parent, title, start)
+    dlg.setFileMode(QFileDialog.Directory)
+    dlg.setOption(QFileDialog.ShowDirsOnly, True)
+    dlg.setOption(QFileDialog.DontUseNativeDialog, True)
+    dlg.setAcceptMode(QFileDialog.AcceptSave if save else QFileDialog.AcceptOpen)
+    dlg.setLabelText(QFileDialog.Accept, "Save" if save else "Open")
+    return dlg
+
+
+def choose_folder(parent, title: str, start: str, save: bool) -> str:
+    """The folder picked in the dialog, or '' when it was cancelled."""
+    dlg = make_folder_dialog(parent, title, start, save)
+    if dlg.exec() and dlg.selectedFiles():
+        return dlg.selectedFiles()[0]
+    return ""
+
+
 def fmt_time(s: float) -> str:
     s = int(round(s))
     return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
@@ -46,6 +66,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_body()
         self.view.set_project(self.project)
+        self._set_title()
         self._slot_preview_width()
         self._set_tooltips()
         self.statusBar().showMessage("Ready. Open a Gerber or Excellon file.")
@@ -72,6 +93,9 @@ class MainWindow(QMainWindow):
         self._act(tb, "Save project…", "pack_save", self.save_project_dialog,
                   "Save the work in progress: you choose a folder, which gets a copy of the loaded files plus the layer settings, high-voltage marks, "
                   "slots, parameters and the jobs already generated (their G-code too).")
+        self.quick_save_act = self._act(tb, "Save", "save", self.quick_save_project, "")
+        self.quick_save_act.setShortcut("Ctrl+S")
+        tb.widgetForAction(self.quick_save_act).setToolButtonStyle(Qt.ToolButtonIconOnly)     # just the symbol
         tb.addSeparator()
         self._act(tb, "Mirror X", "mirror_x", lambda: self.transform("mirror_x"), "Mirror the whole project about a vertical axis")
         self._act(tb, "Mirror Y", "mirror_y", lambda: self.transform("mirror_y"), "Mirror the whole project about a horizontal axis")
@@ -1055,6 +1079,8 @@ class MainWindow(QMainWindow):
     def _set_title(self) -> None:
         name = os.path.basename(os.path.normpath(self.project_dir)) if self.project_dir else ""
         self.setWindowTitle(f"{APP_NAME} {__version__}" + (f"  —  {name}" if name else ""))
+        self.quick_save_act.setToolTip((f"Save the project in {self.project_dir}" if self.project_dir else
+                                        "Save the project (you choose the folder the first time)") + "  (Ctrl+S)")
 
     def _ui_state(self) -> dict:
         fields = {}
@@ -1094,9 +1120,16 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_NAME, "There is nothing to save: load some files first.")
             return
         start = self.project_dir or self.qs.value("project_dir", os.path.expanduser("~"))
-        folder = QFileDialog.getExistingDirectory(self, "Choose the folder where to save the project", start)
+        folder = choose_folder(self, "Choose the folder where to save the project", start, save=True)
         if folder:
             self.save_project_to(folder)
+
+    def quick_save_project(self) -> None:
+        """The floppy button: save into the folder of the current project, or ask for one the first time."""
+        if self.project_dir is None:
+            self.save_project_dialog()
+        elif self.project.data_layers():
+            self.save_project_to(self.project_dir)
 
     def save_project_to(self, folder: str) -> bool:
         same = self.project_dir is not None and os.path.realpath(folder) == os.path.realpath(self.project_dir)
@@ -1124,7 +1157,7 @@ class MainWindow(QMainWindow):
 
     def open_project_dialog(self) -> None:
         start = self.project_dir or self.qs.value("project_dir", os.path.expanduser("~"))
-        folder = QFileDialog.getExistingDirectory(self, "Choose the project folder to open", start)
+        folder = choose_folder(self, "Choose the project folder to open", start, save=False)
         if not folder:
             return
         if (self.project.layers or self.project.slots) and QMessageBox.question(

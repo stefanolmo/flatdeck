@@ -257,9 +257,10 @@ def test_dialogs_ask_for_a_folder_and_confirm_before_overwriting(win, tmp_path, 
     asked = []
     folder = tmp_path / "f1"
     folder.mkdir()
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: asked.append(a[1]) or str(folder))
+    import flatdeck.mainwindow as mw
+    monkeypatch.setattr(mw, "choose_folder", lambda parent, title, start, save: asked.append((title, save)) or str(folder))
     win.save_project_dialog()
-    assert asked and "folder" in asked[0].lower() and projectfile.is_project(str(folder))
+    assert asked and asked[0][1] is True and "save the project" in asked[0][0].lower() and projectfile.is_project(str(folder))
     # the same folder again: saved without asking; another folder that holds a project: asks first
     questions = []
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: questions.append(a[2]) or QMessageBox.No)
@@ -268,7 +269,7 @@ def test_dialogs_ask_for_a_folder_and_confirm_before_overwriting(win, tmp_path, 
     folder2 = tmp_path / "f2"
     folder2.mkdir()
     (folder2 / flatname()).write_text("x")
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(folder2))
+    monkeypatch.setattr(mw, "choose_folder", lambda *a, **k: str(folder2))
     win.save_project_dialog()
     assert questions and "not empty" in questions[0] and not projectfile.is_project(str(folder2))         # said No: nothing written
     shutil.copyfile(folder / projectfile.FILE, folder2 / projectfile.FILE)
@@ -276,14 +277,14 @@ def test_dialogs_ask_for_a_folder_and_confirm_before_overwriting(win, tmp_path, 
     win.save_project_dialog()
     assert questions and "already contains a FlatDeck project" in questions[0]
     # opening replaces the current project only after a confirmation
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(folder))
+    monkeypatch.setattr(mw, "choose_folder", lambda parent, title, start, save: asked.append((title, save)) or str(folder))
     n = len(win.project.layers)
     questions.clear()
     win.open_project_dialog()
     assert questions and "Replace the current project" in questions[0] and len(win.project.layers) == n
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     win.open_project_dialog()
-    assert win.project_dir == str(folder)
+    assert win.project_dir == str(folder) and asked[-1][1] is False                    # the open dialog is not the save one
 
 
 def flatname():
@@ -458,3 +459,59 @@ def test_window_restores_jobs_selection_and_tab(win, tmp_path, monkeypatch):
     w2.regenerate_stale()
     assert "Not regenerated" in w2.messages.toPlainText() and len(w2.project.jobs()) == 3
     w2.close()
+
+
+def test_folder_dialog_says_save_not_open(app):
+    from PySide6.QtWidgets import QFileDialog
+    from flatdeck.mainwindow import make_folder_dialog
+    save = make_folder_dialog(None, "Choose the folder where to save the project", os.path.expanduser("~"), save=True)
+    assert save.labelText(QFileDialog.Accept) == "Save" and save.acceptMode() == QFileDialog.AcceptSave
+    assert save.fileMode() == QFileDialog.Directory and save.testOption(QFileDialog.DontUseNativeDialog)    # the native one always says "Open"
+    assert save.testOption(QFileDialog.ShowDirsOnly)
+    opn = make_folder_dialog(None, "Choose the project folder to open", os.path.expanduser("~"), save=False)
+    assert opn.labelText(QFileDialog.Accept) == "Open" and opn.acceptMode() == QFileDialog.AcceptOpen
+    save.deleteLater()
+    opn.deleteLater()
+
+
+def test_quick_save_button_saves_into_the_current_folder(win, tmp_path, monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QToolButton
+    import flatdeck.mainwindow as mw
+    act = win.quick_save_act
+    btn = next(b for b in win.findChildren(QToolButton) if b.defaultAction() is act)
+    assert btn.toolButtonStyle() == Qt.ToolButtonIconOnly and not act.icon().isNull() and act.shortcut().toString() == "Ctrl+S"
+    # it sits right after the "Save project…" button
+    tb_actions = btn.parent().actions()
+    assert tb_actions.index(act) == tb_actions.index(next(a for a in tb_actions if a.text() == "Save project…")) + 1
+    assert "choose the folder the first time" in act.toolTip()
+    # nothing loaded: asks nothing, saves nothing
+    asked = []
+    monkeypatch.setattr(mw, "choose_folder", lambda parent, title, start, save: asked.append(save) or "")
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    act.trigger()
+    assert win.project_dir is None
+    for f in FILES:
+        win.load_file(os.path.join(EX, f))
+    # the first time there is no current folder yet: it behaves like "Save project…" and asks for one
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    monkeypatch.setattr(mw, "choose_folder", lambda parent, title, start, save: asked.append(save) or str(folder))
+    act.trigger()
+    assert asked[-1] is True and win.project_dir == str(folder) and projectfile.is_project(str(folder))
+    assert str(folder) in act.toolTip() and "(Ctrl+S)" in act.toolTip()
+    # afterwards it saves straight into that folder: no dialog, no question
+    questions = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: questions.append(a[2]) or QMessageBox.No)
+    monkeypatch.setattr(mw, "choose_folder", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not ask for a folder")))
+    win.project.add_slot([[10.0, 10.0], [20.0, 10.0]])
+    act.trigger()
+    assert not questions and len(json.loads((folder / projectfile.FILE).read_text())["slots"]) == 1
+    assert "Project saved" in win.messages.toPlainText()
+    # the project folder was deleted while the project is open: its copies are gone, so saving says so (and writes nothing)
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    shutil.rmtree(folder)
+    act.trigger()
+    assert warned and "no longer on disk" in warned[0] and not folder.exists()

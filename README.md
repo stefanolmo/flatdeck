@@ -148,7 +148,9 @@ set and checks only the geometry.
 
 ## Saving and opening a project
 
-**Save project…** (toolbar) asks for a folder and writes the work in progress into it:
+**Save project…** (toolbar) asks for a folder (the dialog has a **Save** button) and writes the work in progress into it. The button with
+just the floppy symbol next to it, or `Ctrl+S`, saves straight into the folder of the current project, without asking (the first time,
+when there is no folder yet, it asks like *Save project…*):
 
 ```
 <your folder>/
