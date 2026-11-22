@@ -25,6 +25,7 @@ class Layer:
     drill: DrillFile | None = None
     job: cam.CamResult | None = None
     visible: bool = True
+    opacity: float = 1.0            # 0.05 .. 1, how solid the layer is drawn in the view
     path: str = ""
     side: str = "top"               # top | bottom (from the file extension or name)
     regen: object = None            # job only: callable that generates it again with the current origin

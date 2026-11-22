@@ -166,7 +166,12 @@ def _detail(p, c):
     for y in (6, 12, 18): _poly(p, [(4, y), (20, y)])
 
 
-_NAMES = "open save fit mirror_x mirror_y rotate play trash drill target pack_save pack_open back forward up newfolder list detail".split()
+def _ruler(p, c):
+    _poly(p, [(3, 16), (16, 3), (21, 8), (8, 21)], True)
+    for a, b in (((6, 13), (8, 15)), ((9, 10), (11, 12)), ((12, 7), (14, 9))): _poly(p, [a, b])
+
+
+_NAMES = "ruler open save fit mirror_x mirror_y rotate play trash drill target pack_save pack_open back forward up newfolder list detail".split()
 _FUNCS = {n: globals()["_" + n] for n in _NAMES}
 
 

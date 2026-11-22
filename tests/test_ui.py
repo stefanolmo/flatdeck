@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from flatdeck import __version__, theme
@@ -393,3 +393,45 @@ def test_unused_settings_are_disabled(win):
     assert not w.co_gapw.isEnabled()
     w.co_gaps.setCurrentIndex(w.co_gaps.findData("four"))
     assert w.co_gapw.isEnabled()
+
+
+def test_measure_two_clicks_and_opacity(win):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QMouseEvent
+    load_all(win)
+    win.gen_isolation()
+    v = win.view
+    v.resize(800, 600)
+    v.fit()
+    v.grab()
+    win.measure_act.setChecked(True)
+    assert v.measure_mode
+    got = []
+    v.measured.connect(lambda dx, dy: got.append((dx, dy)))
+
+    def click(sx, sy):
+        pos = QPointF(sx, sy)
+        for t in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            QApplication.sendEvent(v, QMouseEvent(t, pos, v.mapToGlobal(pos), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+    click(100, 100)
+    assert len(v.measure_pts) == 1
+    click(100 + 5 * v.scale, 100)                     # 5 mm to the right
+    assert got and abs(got[0][0] - 5) < 1e-6 and abs(got[0][1]) < 1e-6
+    v.grab()                                          # the label is drawn without errors
+    click(300, 300)                                   # a third click starts again
+    assert len(v.measure_pts) == 1
+    win.slot_draw.setChecked(True)
+    win.tabs.setCurrentWidget(win._slot_tab)
+    win._update_draw()
+    assert not win.measure_act.isChecked()
+    # opacity of the selected job
+    win.layer_list.setCurrentRow(len(win.project.layers) - 1)
+    lay = win.project.layers[-1]
+    win.opacity.setValue(40)
+    assert abs(lay.opacity - 0.4) < 1e-9
+    n = v.renders
+    v.grab()
+    assert v.renders == n + 1                         # the picture is drawn again
+    win.layer_list.setCurrentRow(0)
+    win.layer_list.setCurrentRow(len(win.project.layers) - 1)
+    assert win.opacity.value() == 40

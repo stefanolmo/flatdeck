@@ -47,6 +47,7 @@ class BoardView(QWidget):
     drawPoint = Signal(float, float)        # click in slot-drawing mode
     drawFinished = Signal()                 # double click / Enter in slot-drawing mode
     drawCancelled = Signal()                # Escape in slot-drawing mode
+    measured = Signal(float, float)         # measuring: (dx, dy) in mm between the two points
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,6 +64,8 @@ class BoardView(QWidget):
         self.draft: list = []                   # points of the slot being drawn
         self.slot_width = 2.0                   # width of the slot preview band
         self.slot_sel = -1
+        self.measure_mode = False               # measuring: two clicks give the distance between the points
+        self.measure_pts: list = []
         self._cursor = None
         self._cache: dict = {}                  # QPainterPaths of the layers
         self._lod: dict = {}                    # (id(job), level) -> (job, closed chunks, open chunks)
@@ -126,7 +129,7 @@ class BoardView(QWidget):
         for l in pr.layers:
             items.append((id(l), l.kind, l.visible, id(l.gerber.polys) if l.gerber is not None else 0,
                           id(l.gerber.strokes) if l.gerber is not None else 0, tuple(l.hv_points) if l.hv_points else (),
-                          id(l.job) if l.job is not None else 0,
+                          id(l.job) if l.job is not None else 0, l.opacity,
                           tuple(id(t.holes) for t in l.drill.tools.values()) if l.drill is not None else ()))
         return (tuple(items), id(self.selected), self.show_tool_width, tuple(pr.origin()), self.devicePixelRatioF())
 
@@ -174,6 +177,7 @@ class BoardView(QWidget):
             if not lay.visible:
                 continue
             sel = lay is self.selected
+            ops.append(lambda p, o=lay.opacity: p.setOpacity(o))
             if lay.kind == "copper":
                 col = QColor(theme.LAYER_COLORS[k % len(theme.LAYER_COLORS)])
                 k += 1
@@ -262,7 +266,7 @@ class BoardView(QWidget):
             self._bands.remove(ctx)
         p.save()
         p.resetTransform()
-        p.setOpacity(wide.alphaF())
+        p.setOpacity(p.opacity() * wide.alphaF())
         p.drawImage(0, 0, ctx["img"])
         p.restore()
         ctx.clear()
@@ -389,6 +393,7 @@ class BoardView(QWidget):
         self._draw_slots(p)
         self._draw_origin(p)
         p.restore()
+        self._draw_measure(p)
         p.end()
 
     def _paint_scene(self, p: QPainter) -> None:
@@ -424,6 +429,51 @@ class BoardView(QWidget):
         pen.setCosmetic(True)
         p.setPen(pen)
         p.drawLine(QPointF(ox, oy - s), QPointF(ox, oy + s))
+
+    def _measure_end(self):
+        """The second point of the measurement: the click, or the cursor while it is still being chosen."""
+        if len(self.measure_pts) >= 2:
+            return self.measure_pts[1]
+        return self._cursor if len(self.measure_pts) == 1 else None
+
+    def _draw_measure(self, p: QPainter) -> None:
+        if not self.measure_mode or not self.measure_pts:
+            return
+        b = self._measure_end()
+        sx = lambda q: QPointF(self.width() / 2 + (q[0] - self.centre[0]) * self.scale, self.height() / 2 - (q[1] - self.centre[1]) * self.scale)
+        a = self.measure_pts[0]
+        pen = QPen(QColor("#fbbf24"), 1.6)
+        p.setPen(pen)
+        p.setBrush(QColor("#fbbf24"))
+        pa = sx(a)
+        p.drawEllipse(pa, 3.5, 3.5)
+        if b is None:
+            return
+        pb = sx(b)
+        p.drawLine(pa, pb)
+        p.drawEllipse(pb, 3.5, 3.5)
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        text = f"{math.hypot(dx, dy):.3f} mm    ΔX {dx:+.3f}   ΔY {dy:+.3f}"
+        p.setFont(QFont("sans", 9))
+        r = p.fontMetrics().boundingRect(text).adjusted(-6, -3, 6, 3)
+        mid = (pa + pb) / 2
+        r.moveCenter((mid + QPointF(0, -16)).toPoint())
+        r.moveLeft(min(max(r.left(), 4), max(self.width() - r.width() - 4, 4)))
+        r.moveTop(min(max(r.top(), 4), max(self.height() - r.height() - 4, 4)))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(11, 15, 20, 220))
+        p.drawRoundedRect(r, 4, 4)
+        p.setPen(QColor("#fbbf24"))
+        p.drawText(r, Qt.AlignCenter, text)
+
+    def set_measure_mode(self, on: bool) -> None:
+        self.measure_mode = on
+        self.measure_pts = []
+        self._cursor = None
+        self.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
+        if on:
+            self.setFocus()
+        self.update()
 
     def _draw_slots(self, p: QPainter) -> None:
         col = QColor(theme.JOB_COLORS["slots"])
@@ -485,7 +535,10 @@ class BoardView(QWidget):
         self.update()
 
     def keyPressEvent(self, ev) -> None:
-        if self.draw_mode and ev.key() in (Qt.Key_Return, Qt.Key_Enter):
+        if self.measure_mode and ev.key() == Qt.Key_Escape:
+            self.measure_pts = []
+            self.update()
+        elif self.draw_mode and ev.key() in (Qt.Key_Return, Qt.Key_Enter):
             self.drawFinished.emit()
         elif self.draw_mode and ev.key() == Qt.Key_Escape:
             self.drawCancelled.emit()
@@ -503,6 +556,9 @@ class BoardView(QWidget):
             d = pos - self._drag[0]
             self.centre = self._drag[1] - np.array([d.x(), -d.y()]) / self.scale
             self.update()
+        if self.measure_mode and len(self.measure_pts) == 1:
+            self._cursor = self.to_world(pos.x(), pos.y())
+            self.update()
         if self.draw_mode and self.draft:
             self._cursor = self.to_world(pos.x(), pos.y())
             self.update()
@@ -513,7 +569,14 @@ class BoardView(QWidget):
 
     def mouseReleaseEvent(self, ev) -> None:
         click = (self._drag is not None and ev.button() == Qt.LeftButton and (ev.position() - self._drag[0]).manhattanLength() < 4)
-        if click and self.pick_layer is not None:
+        if click and self.measure_mode:
+            q = self.to_world(ev.position().x(), ev.position().y())
+            self.measure_pts = [q] if len(self.measure_pts) != 1 else self.measure_pts + [q]
+            if len(self.measure_pts) == 2:
+                a = self.measure_pts[0]
+                self.measured.emit(q[0] - a[0], q[1] - a[1])
+            self.update()
+        elif click and self.pick_layer is not None:
             self.picked.emit(*self.to_world(ev.position().x(), ev.position().y()))
         elif click and self.draw_mode:
             self.drawPoint.emit(*self.to_world(ev.position().x(), ev.position().y()))

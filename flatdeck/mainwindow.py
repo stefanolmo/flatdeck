@@ -1,13 +1,14 @@
 """Main window: layer list, operation panels (isolation / drilling / cut-out), 2D view and G-code preview."""
 from __future__ import annotations
 
+import math
 import os
 
 import numpy as np
 
 from PySide6.QtCore import QSettings, QSize, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QToolButton, QGridLayout, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QSlider, QToolButton, QGridLayout, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
                                QPushButton, QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget,
                                QToolBar, QVBoxLayout, QWidget, QHeaderView)
@@ -111,6 +112,10 @@ class MainWindow(QMainWindow):
         self._act(tb, "Rotate 90°", "rotate", lambda: self.transform("rot90"), "Rotate the whole project 90° counter-clockwise")
         tb.addSeparator()
         self._act(tb, "Fit", "fit", lambda: self.view.fit(), "Zoom to the whole board (or double-click the view)")
+        self.measure_act = self._act(tb, "Measure", "ruler", lambda *_: None,
+                                     "Distance between two points: click the first, then the second (Esc starts again)")
+        self.measure_act.setCheckable(True)
+        self.measure_act.toggled.connect(self._set_measure)
 
     def _build_body(self) -> None:
         split = QSplitter(Qt.Horizontal)
@@ -130,6 +135,19 @@ class MainWindow(QMainWindow):
         self.layer_list.itemChanged.connect(self._item_changed)
         self.layer_list.currentRowChanged.connect(self._selection_changed)
         c.body.addWidget(self.layer_list)
+        orow = QHBoxLayout()
+        orow.addWidget(QLabel("Opacity"))
+        self.opacity = QSlider(Qt.Horizontal)
+        self.opacity.setRange(5, 100)
+        self.opacity.setValue(100)
+        self.opacity.setToolTip("How solid the selected layer or job is drawn in the view (it does not change the G-code)")
+        self.opacity.valueChanged.connect(self._opacity_changed)
+        self.opacity_label = QLabel("100 %")
+        self.opacity_label.setObjectName("muted")
+        self.opacity_label.setMinimumWidth(40)
+        orow.addWidget(self.opacity, 1)
+        orow.addWidget(self.opacity_label)
+        c.body.addLayout(orow)
         row = QHBoxLayout()
         rm = QPushButton("Remove")
         rm.setIcon(theme.icon("trash"))
@@ -183,6 +201,8 @@ class MainWindow(QMainWindow):
         right.setChildrenCollapsible(False)
         self.view = BoardView()
         self.view.picked.connect(self._picked)
+        self.view.measured.connect(lambda dx, dy: self.statusBar().showMessage(
+            f"Distance {math.hypot(dx, dy):.3f} mm   ΔX {dx:+.3f}   ΔY {dy:+.3f}", 0))
         self.view.drawPoint.connect(self._draw_point)
         self.view.drawFinished.connect(self._draw_finished)
         self.view.drawCancelled.connect(self._draw_cancelled)
@@ -421,6 +441,8 @@ class MainWindow(QMainWindow):
 
     def _update_pick(self) -> None:
         on = self.hv_pick.isChecked() and self.tabs.currentWidget() is self._hv_tab and self._hv_layer() is not None
+        if on:
+            self.measure_act.setChecked(False)
         self.view.set_pick_layer(self._hv_layer() if on else None)
 
     def _hv_count(self) -> None:
@@ -518,7 +540,10 @@ class MainWindow(QMainWindow):
         self.view.update()
 
     def _update_draw(self) -> None:
-        self.view.set_draw_mode(self.slot_draw.isChecked() and self.tabs.currentWidget() is self._slot_tab)
+        on = self.slot_draw.isChecked() and self.tabs.currentWidget() is self._slot_tab
+        if on:
+            self.measure_act.setChecked(False)
+        self.view.set_draw_mode(on)
 
     def _snap(self, x: float, y: float) -> tuple:
         """Snap to the board edge when the click is within a few pixels of it."""
@@ -946,9 +971,30 @@ class MainWindow(QMainWindow):
             self.project.layers[r].visible = item.checkState() == Qt.Checked
             self.view.update()
 
+    def _set_measure(self, on: bool) -> None:
+        if on:
+            self.hv_pick.setChecked(False)
+            self.slot_draw.setChecked(False)
+        self.view.set_measure_mode(on)
+        self.statusBar().showMessage("Measure: click two points" if on else "", 4000)
+
+    def _opacity_changed(self, value: int) -> None:
+        self.opacity_label.setText(f"{value} %")
+        lay = self._current()
+        if lay is not None and not self._loading:
+            lay.opacity = value / 100
+            self.view.update()
+
     def _selection_changed(self, *_) -> None:
         lay = self._current()
         self.view.selected = lay
+        self.opacity.setEnabled(lay is not None)
+        self.opacity_label.setEnabled(lay is not None)
+        if lay is not None:
+            self.opacity.blockSignals(True)
+            self.opacity.setValue(round(lay.opacity * 100))
+            self.opacity.blockSignals(False)
+            self.opacity_label.setText(f"{round(lay.opacity * 100)} %")
         self.view.update()
         job = lay.job if lay is not None and lay.kind == "job" else None
         self.save_act.setEnabled(job is not None)
