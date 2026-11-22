@@ -142,7 +142,7 @@ class MainWindow(QMainWindow):
         sc.setWidgetResizable(True)
         sc.setFrameShape(QScrollArea.NoFrame)
         sc.setWidget(left)
-        sc.setMinimumWidth(400)
+        sc.setMinimumWidth(470)
         split.addWidget(sc)
 
         # ---- right column
@@ -170,7 +170,7 @@ class MainWindow(QMainWindow):
         right.setStretchFactor(1, 1)
         split.addWidget(right)
         split.setStretchFactor(1, 1)
-        split.setSizes([430, 930])
+        split.setSizes([490, 910])
 
     # ----- parameter helpers (remembered between sessions)
     def _field(self, key: str, widget, default=None):
@@ -413,9 +413,9 @@ class MainWindow(QMainWindow):
         self.slot_keep = self._field("slot_keep", dspin(0, 10, 0.5, 2, " mm", 0.1))
         self.slot_smooth = self._field("slot_smooth", dspin(0, 50, 8, 1, " mm"))
         self.slot_smooth.setSpecialValueText("off")
-        self.slot_suggest = QPushButton("Suggest slots from the HV islands")
+        self.slot_suggest = QPushButton("Suggest slots")
         self.slot_suggest.clicked.connect(self.suggest_slots)
-        self.slot_draw = QPushButton("Draw a slot in the view")
+        self.slot_draw = QPushButton("Draw a slot")
         self.slot_draw.setCheckable(True)
         self.slot_draw.toggled.connect(lambda *_: self._update_draw())
         row = QHBoxLayout()

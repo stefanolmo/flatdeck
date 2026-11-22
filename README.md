@@ -79,6 +79,9 @@ is closer to the outline than the keep-out no frame can be cleared and you get a
 at the top and bottom). Run it once per layer, mirrored for the bottom. Which distance is enough for your voltage is for you and the
 standard to decide.
 
+<p align="center"><img src="docs/clearing.png" alt="FlatDeck - rectangle clearing, frame clearing and cut-out" width="900"></p>
+<p align="center"><sub>Teal: isolation with the rectangle option (0.8 mm tool); blue: the frame cleared with a 2.5 mm tool; yellow: the cut-out.</sub></p>
+
 **Traces too thin?** The cutting width is computed from the bit data (V-bit: tip + 2 × depth × tan(angle / 2)); real bits rarely match it
 exactly (the real tip is often wider than declared, wear, runout, a Z zero slightly too deep). Two controls in the Isolation tab:
 *Measured width* (cut a test groove, measure it, type it: it replaces the computed width) and *Safety margin* (the groove is moved away
@@ -109,6 +112,9 @@ traces (click again to unmark). Marked islands turn red. Mark the same net again
   A copper-free band is not a substitute for proper design of mains circuits.
 
 ## Slots between high-voltage and low-voltage copper
+
+<p align="center"><img src="docs/hv-slots.png" alt="FlatDeck - high-voltage band and suggested slots on the Fancoil example board" width="900"></p>
+<p align="center"><sub>The upper part of the board is marked as high voltage: the orange loops are the copper-free band, the purple lines the suggested slots.</sub></p>
 
 A slot cut through the board lengthens the creepage path between the two zones. Open the **Slots** tab:
 

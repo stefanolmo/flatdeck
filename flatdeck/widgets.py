@@ -24,6 +24,7 @@ class Card(QFrame):
         self.body = QVBoxLayout()
         self.body.setSpacing(8)
         self._lay.addLayout(self.body)
+        self._lay.addStretch(1)              # a page taller than its content (tabs share one height) keeps the content at the top
 
 
 def dspin(lo: float, hi: float, val: float, dec: int = 2, suffix: str = "", step: float | None = None) -> QDoubleSpinBox:
