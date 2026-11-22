@@ -71,7 +71,7 @@ class MainWindow(QMainWindow):
         self._act(tb, "Open project…", "pack_open", self.open_project_dialog, "Open a project folder saved by FlatDeck (files, marks, slots and settings)")
         self._act(tb, "Save project…", "pack_save", self.save_project_dialog,
                   "Save the work in progress: you choose a folder, which gets a copy of the loaded files plus the layer settings, high-voltage marks, "
-                  "slots and parameters. Generated G-code is not saved: it is made again from the project.")
+                  "slots, parameters and the jobs already generated (their G-code too).")
         tb.addSeparator()
         self._act(tb, "Mirror X", "mirror_x", lambda: self.transform("mirror_x"), "Mirror the whole project about a vertical axis")
         self._act(tb, "Mirror Y", "mirror_y", lambda: self.transform("mirror_y"), "Mirror the whole project about a horizontal axis")
@@ -805,6 +805,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, APP_NAME, str(e))
         finally:
             QApplication.restoreOverrideCursor()
+        left = [l.name for l in self.project.stale_jobs()]
+        if left:                                           # jobs read from a saved project carry no recipe to make them again
+            self._log(f"⚠ Not regenerated (opened from a saved project): {', '.join(left)}. Generate them again from their tab.")
         self.view.invalidate()
         self._refresh()
 
@@ -1061,7 +1064,8 @@ class MainWindow(QMainWindow):
                 fields[k] = v
         tools = {str(self.dr_table.item(r, 0).data(Qt.UserRole)): self.dr_table.item(r, 0).checkState() == Qt.Checked
                  for r in range(self.dr_table.rowCount())}
-        return {"fields": fields, "checks": {n: getattr(self, n).isChecked() for n in UI_CHECKS}, "drill_tools": tools}
+        return {"fields": fields, "checks": {n: getattr(self, n).isChecked() for n in UI_CHECKS}, "drill_tools": tools,
+                "tab": self.tabs.currentIndex(), "selected": self.layer_list.currentRow()}
 
     def _apply_ui_state(self, ui: dict) -> None:
         self._loading = True
@@ -1113,7 +1117,8 @@ class MainWindow(QMainWindow):
         self.qs.setValue("project_dir", folder)
         self._set_title()
         n = len(self.project.data_layers())
-        self._log(f"Project saved in {folder}: {n} file(s) copied, {len(self.project.slots)} slot(s)")
+        self._log(f"Project saved in {folder}: {n} file(s) copied, {len(self.project.jobs())} job(s) with their G-code, "
+                  f"{len(self.project.slots)} slot(s)")
         self.statusBar().showMessage(f"Project saved in {folder}", 6000)
         return True
 
@@ -1148,12 +1153,17 @@ class MainWindow(QMainWindow):
             it = self.dr_table.item(r, 0)
             if str(it.data(Qt.UserRole)) in tools:
                 it.setCheckState(Qt.Checked if tools[str(it.data(Qt.UserRole))] else Qt.Unchecked)
+        if 0 <= ui.get("tab", -1) < self.tabs.count():
+            self.tabs.setCurrentIndex(int(ui["tab"]))
+        if 0 <= ui.get("selected", -1) < len(project.layers):
+            self.layer_list.setCurrentRow(int(ui["selected"]))
         self.view.fit()
         self._set_title()
-        self._log(f"Project opened from {folder}: {len(project.data_layers())} file(s), {len(project.slots)} slot(s)")
+        self._log(f"Project opened from {folder}: {len(project.data_layers())} file(s), {len(project.jobs())} job(s), "
+                  f"{len(project.slots)} slot(s)")
         for msg in warnings:
             self._log(f"  ⚠ {msg}")
-        self.statusBar().showMessage("Project opened. Generated G-code is not saved: generate the jobs again.", 8000)
+        self.statusBar().showMessage(f"Project opened: {len(project.data_layers())} file(s), {len(project.jobs())} job(s)", 8000)
         return True
 
     def save_gcode(self) -> None:

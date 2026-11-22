@@ -152,16 +152,22 @@ set and checks only the geometry.
 
 ```
 <your folder>/
-  flatdeck-project.json     layers (type, side, visibility), origin choice, high-voltage marks, slots, transforms, all the parameters
+  flatdeck-project.json     layers and jobs in the order of the layer list, origin choice, high-voltage marks, slots, transforms, all the parameters
   files/                    a COPY of every Gerber / Excellon file that was loaded
+  jobs/                     every job already generated: 01_<name>.nc (the G-code, exactly what "Save G-code" writes) and 01_<name>.npz (toolpaths for the preview)
 ```
 
 The project is therefore self-contained: it keeps working if the original files are moved or deleted, and from then on FlatDeck uses
 its own copies. **Open project…** reads such a folder back (after asking before it replaces the current work) and restores the layers,
-the marks, the slots and every setting of the tabs, including the bits you ticked in *Drilling*; the settings of the project do not
-overwrite your own defaults. Saving again to the same folder just updates it; another folder that already holds a project, or is not
-empty, asks first. **Generated G-code is not part of the project**: it is made again with *Generate*, from the same settings. A
-project folder is treated as untrusted data: it can only name files inside itself.
+the generated jobs (isolation, drilling, cut-out, HV band, slots, frame: with their G-code, preview, warnings and red marks), the HV
+marks, the slots, every setting of the tabs (including the bits you ticked in *Drilling*), the selected layer and the open tab; the
+settings of the project do not overwrite your own defaults. Saving again to the same folder just updates it (jobs you removed
+disappear from `jobs/`); another folder that already holds a project, or is not empty, asks first.
+
+A restored job keeps its G-code and preview, but it carries no recipe to be made again: if you later change the circuit so that
+its origin moves, the job is marked *⚠ old origin* and has to be generated again from its tab (the settings are restored, so it is one
+click). A project folder is treated as untrusted data: it can only name files inside itself, and the toolpath files are read without
+pickle.
 
 ## Limits of v1 (what is NOT there compared with FlatCAM)
 

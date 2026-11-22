@@ -39,7 +39,7 @@ def test_save_copies_the_files_and_writes_a_project_file(tmp_path):
     for f in FILES:
         assert (out / "files" / f).read_bytes() == (src / f).read_bytes()                   # byte for byte
     data = json.loads((out / projectfile.FILE).read_text())
-    assert data["format"] == 1 and [e["kind"] for e in data["layers"]] == ["outline", "copper", "copper", "drill"]
+    assert data["format"] == 2 and [e["kind"] for e in data["layers"]] == ["outline", "copper", "copper", "drill"]
     assert all(l.path.startswith(str(out / "files")) for l in p.data_layers())                # the project now works on its copies
 
 
@@ -220,7 +220,8 @@ def test_save_and_open_through_the_window_restore_the_settings_too(win, tmp_path
     w2.show()
     assert w2.open_project_from(str(out))
     assert [l.name for l in w2.project.data_layers()] == [l.name for l in win.project.data_layers()]
-    assert not w2.project.jobs() and "generate the jobs again" in w2.statusBar().currentMessage()      # G-code is not part of the project
+    assert [j.name for j in w2.project.jobs()] == [j.name for j in win.project.jobs()]               # the generated job comes back
+    assert w2.project.jobs()[0].job.gcode == win.project.jobs()[0].job.gcode and "1 job(s)" in w2.statusBar().currentMessage()
     assert w2.iso_dia.value() == 0.4 and w2.iso_passes.value() == 2 and w2.iso_mode.currentData() == "ext"
     assert w2.iso_tool.currentData() == "vbit" and w2.iso_angle.value() == 20 and w2.iso_rect.isChecked() and not w2.iso_clear.isChecked()
     assert w2.slot_dia.value() == 3.0 and w2.fr_keep.value() == 2.0 and w2.hv_mirror.isChecked()
@@ -233,7 +234,7 @@ def test_save_and_open_through_the_window_restore_the_settings_too(win, tmp_path
     assert w2.qs.value("p/iso_dia") == saved_default
     w2.view.grab()
     w2.gen_isolation()
-    assert w2.project.jobs()[-1].job.kind == "isolation"
+    assert len(w2.project.jobs()) == 2 and w2.project.jobs()[-1].job.kind == "isolation"
     w2.close()
 
 
@@ -304,7 +305,7 @@ def test_a_damaged_project_shows_a_message_and_leaves_the_session_alone(win, tmp
 def test_toolbar_has_the_project_actions(win):
     texts = {a.text(): a for a in win.findChildren(type(win.save_act))}
     assert "Open project…" in texts and "Save project…" in texts
-    assert "copy of the loaded files" in texts["Save project…"].toolTip() and "G-code is not saved" in texts["Save project…"].toolTip()
+    assert "copy of the loaded files" in texts["Save project…"].toolTip() and "their G-code too" in texts["Save project…"].toolTip()
 
 
 def test_drill_bit_choice_survives_a_refresh(win):
@@ -317,3 +318,143 @@ def test_drill_bit_choice_survives_a_refresh(win):
     win.gen_drill()
     assert len(win.project.jobs()[-1].job.holes) == 56 - len(win.project.layers[3].drill.tools[sorted(win.project.layers[3].drill.tools,
         key=lambda n: win.project.layers[3].drill.tools[n].dia)[1]].holes)
+
+
+# ---------------------------------------------------------------- generated jobs
+def jobs_project(tmp_path):
+    p, _ = board(tmp_path)
+    cu = p.layers[2].gerber.polys
+    outer, inner, _ = p.board_outline()
+    o = p.origin()
+    p.add_job(cam.isolate(cu, cam.IsolationParams(tool_dia=0.4, margin=0.1, clear_rect=True), o, "Isolation A"))
+    p.add_job(cam.drill(p.layers[3].drill, cam.DrillParams(), o, "Drilling A"))
+    p.add_job(cam.cutout(outer, inner, cam.CutoutParams(gaps="four"), o, "Cut-out"))
+    isl = p.layers[2].islands()
+    p.toggle_hv(p.layers[2], *isl[max(range(len(isl)), key=lambda i: geom.area(isl[i].outer))].outer[0])
+    hv, others, _h = p.slot_obstacles()
+    p.add_job(cam.hv_clearance(hv, others, cam.HVParams(), o, "HV clearance"))                 # has red marks (conflicts)
+    p.add_slot([[10.0, 10.0], [30.0, 12.0]])
+    p.add_job(cam.slots([s.pts for s in p.slots], cam.SlotParams(), o, "Slots", copper=p.all_copper(), board=(outer, inner)))
+    p.add_job(cam.frame(cu, cam.IsolationParams(tool_dia=0.4, margin=0.1), outer, inner, cam.FrameParams(), o, "Frame"))
+    p.layers[p.layers.index(p.jobs()[1])].visible = False
+    return p
+
+
+def test_every_kind_of_job_comes_back_exactly(tmp_path):
+    p = jobs_project(tmp_path)
+    assert len(p.jobs()) == 6 and any(j.job.marks for j in p.jobs())
+    out = tmp_path / "proj"
+    projectfile.save_project(p, str(out))
+    q = projectfile.load_project(str(out))[0]
+    assert [(l.kind, l.name) for l in q.layers] == [(l.kind, l.name) for l in p.layers]                  # same order, jobs among the files
+    for a, b in zip(p.jobs(), q.jobs()):
+        x, y = a.job, b.job
+        assert (x.kind, x.name, x.gcode, x.origin, x.tool_dia, x.warnings) == (y.kind, y.name, y.gcode, y.origin, y.tool_dia, y.warnings)
+        assert x.length == pytest.approx(y.length) and x.time_s == pytest.approx(y.time_s) and a.visible == b.visible
+        assert [c for _, c in x.paths] == [c for _, c in y.paths] and len(x.paths) == len(y.paths)
+        assert all(np.allclose(m, n) for (m, _), (n, _) in zip(x.paths, y.paths))
+        assert len(x.marks) == len(y.marks) and all(np.allclose(m, n) for m, n in zip(x.marks, y.marks))
+        assert np.allclose(np.array(x.holes).reshape(-1, 3), np.array(y.holes).reshape(-1, 3))
+    assert not q.stale_jobs() and not q.jobs()[1].visible
+    # the G-code is also a plain file, the very text "Save G-code" would write
+    names = sorted(os.listdir(out / "jobs"))
+    assert len(names) == 12 and names[0].startswith("01_Isolation_A") and names[0].endswith(".nc")
+    assert (out / "jobs" / names[0]).read_text() == p.jobs()[0].job.gcode
+
+
+def test_jobs_removed_since_the_last_save_do_not_linger(tmp_path):
+    p = jobs_project(tmp_path)
+    out = tmp_path / "proj"
+    projectfile.save_project(p, str(out))
+    p.layers.remove(p.jobs()[0])
+    p.layers.remove(p.jobs()[0])
+    projectfile.save_project(p, str(out))
+    assert len(os.listdir(out / "jobs")) == 8
+    assert len(projectfile.load_project(str(out))[0].jobs()) == 4
+
+
+def test_a_project_without_jobs_and_old_format_one_still_open(tmp_path):
+    p, _ = board(tmp_path)
+    out = tmp_path / "proj"
+    projectfile.save_project(p, str(out))
+    path = out / projectfile.FILE
+    d = json.loads(path.read_text())
+    d["format"] = 1
+    for e in d["layers"]:
+        e.pop("type")                                                                              # format 1 had no "type"
+    path.write_text(json.dumps(d))
+    q = projectfile.load_project(str(out))[0]
+    assert len(q.data_layers()) == 4 and not q.jobs()
+
+
+def test_job_files_are_untrusted_too(tmp_path):
+    p = jobs_project(tmp_path)
+    out = tmp_path / "proj"
+    projectfile.save_project(p, str(out))
+    path = out / projectfile.FILE
+    good = json.loads(path.read_text())
+    first = next(i for i, e in enumerate(good["layers"]) if e["type"] == "job")
+
+    def broken(**kw):
+        d = json.loads(json.dumps(good))
+        d["layers"][first].update(kw)
+        path.write_text(json.dumps(d))
+
+    broken(file="../../etc/passwd")
+    with pytest.raises(ProjectError, match="outside its folder"):
+        projectfile.load_project(str(out))
+    broken(data="/etc/passwd")
+    with pytest.raises(ProjectError, match="outside its folder"):
+        projectfile.load_project(str(out))
+    broken(data="jobs/nothing.npz")
+    with pytest.raises(ProjectError, match="is missing"):
+        projectfile.load_project(str(out))
+    path.write_text(json.dumps(good))
+    npz = next(out.glob("jobs/*.npz"))
+    npz.write_bytes(b"this is not a zip file")
+    with pytest.raises(ProjectError, match="damaged"):
+        projectfile.load_project(str(out))
+    np.savez(npz, pts=np.array([object(), object()], dtype=object), starts=np.array([0, 2]), closed=np.array([True]),         # a pickled array
+             marks=np.zeros((0, 2)), mstarts=np.array([0]), holes=np.zeros((0, 3)))
+    with pytest.raises(ProjectError, match="damaged"):                                                  # refused, never unpickled
+        projectfile.load_project(str(out))
+    np.savez(npz, pts=np.zeros((3, 2)), starts=np.array([0, 5]), closed=np.array([True]), marks=np.zeros((0, 2)),
+             mstarts=np.array([0]), holes=np.zeros((0, 3)))
+    with pytest.raises(ProjectError, match="damaged"):
+        projectfile.load_project(str(out))
+
+
+def test_window_restores_jobs_selection_and_tab(win, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    for f in FILES:
+        win.load_file(os.path.join(EX, f))
+    win.iso_layer.setCurrentIndex(0)
+    win.gen_isolation()
+    win.gen_drill()
+    win.gen_cutout()
+    win.layer_list.setCurrentRow(5)
+    win.tabs.setCurrentIndex(1)
+    out = tmp_path / "proj"
+    out.mkdir()
+    win.save_project_to(str(out))
+    assert "3 job(s) with their G-code" in win.messages.toPlainText()
+    from flatdeck.mainwindow import MainWindow
+    w2 = MainWindow()
+    w2.show()
+    assert w2.open_project_from(str(out))
+    assert [l.kind for l in w2.project.layers] == [l.kind for l in win.project.layers]
+    assert w2.layer_list.currentRow() == 5 and w2.tabs.currentIndex() == 1 and "⚙" in w2.layer_list.item(4).text()
+    assert "Drilling" in w2.layer_list.item(5).text() and "Save G-code" and w2.save_act.isEnabled()
+    w2.view.grab()                                                                                      # the preview paints the restored jobs
+    # the restored job is saved as G-code exactly like the original
+    target = tmp_path / "again.nc"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    w2.save_gcode()
+    assert target.read_text() == win.project.jobs()[1].job.gcode
+    # removing the outline moves the origin: the jobs become stale, and they cannot be regenerated (no recipe): the program says so
+    w2.layer_list.setCurrentRow(next(i for i, l in enumerate(w2.project.layers) if l.kind == "outline"))
+    w2.remove_selected()
+    assert w2.project.stale_jobs() and any("old origin" in w2.layer_list.item(i).text() for i in range(w2.layer_list.count()))
+    w2.regenerate_stale()
+    assert "Not regenerated" in w2.messages.toPlainText() and len(w2.project.jobs()) == 3
+    w2.close()
