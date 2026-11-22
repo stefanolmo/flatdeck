@@ -326,3 +326,19 @@ def test_view_pan_reuses_picture_and_refines(win):
     win.project.layers[-1].visible = False        # content change -> redraw
     v.grab()
     assert v.renders >= n + 3
+
+
+def test_view_zoom_during_refine_does_not_leave_painters_open(win):
+    from PySide6.QtCore import QTimer
+    load_all(win)
+    win.gen_isolation()
+    v = win.view
+    v.resize(800, 600)
+    v.fit()
+    v.grab()
+    v._scene["aa"] = False
+    v._start_refine()
+    QApplication.processEvents()
+    v._begin_interaction()                        # a zoom/drag arrives while the good picture is being drawn
+    assert v._refine is None and not v._bands
+    v._end_interaction()

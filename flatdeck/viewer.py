@@ -16,7 +16,7 @@ import time
 import numpy as np
 from PySide6.QtCore import QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QApplication, QWidget
 
 from . import geom, theme
 
@@ -68,6 +68,7 @@ class BoardView(QWidget):
         self._lod: dict = {}                    # (id(job), level) -> (job, closed chunks, open chunks)
         self._scene: dict | None = None         # the off-screen picture and what it was drawn for
         self._refine: dict | None = None        # the good picture being drawn
+        self._bands: list = []                  # band images being drawn (their painters must be ended before the images are freed)
         self._interacting = False
         self._settle = QTimer(self, singleShot=True, interval=SETTLE_MS)
         self._settle.timeout.connect(self._end_interaction)
@@ -75,6 +76,8 @@ class BoardView(QWidget):
         self._idle.timeout.connect(self._start_refine)
         self.renders = 0                        # pictures drawn so far (for the tests)
         self._drag = None
+        if QApplication.instance() is not None:
+            QApplication.instance().aboutToQuit.connect(self._cancel_refine)    # do not leave a painter open at exit
         self.empty_message = "Open a Gerber or Excellon file\n(or drag it here)"
 
     # ----- data
@@ -244,6 +247,7 @@ class BoardView(QWidget):
         q.setRenderHint(QPainter.Antialiasing, bool(p.renderHints() & QPainter.Antialiasing))
         q.setTransform(p.transform())
         ctx["img"], ctx["painter"] = img, q
+        self._bands.append(ctx)
 
     def _band_chunk(self, ctx: dict, path, col: QColor, width: float) -> None:
         pen = QPen(QColor(col.red(), col.green(), col.blue(), 255), max(width * self.scale, 1.0), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
@@ -254,6 +258,8 @@ class BoardView(QWidget):
 
     def _band_end(self, p: QPainter, ctx: dict, wide: QColor) -> None:
         ctx["painter"].end()
+        if ctx in self._bands:
+            self._bands.remove(ctx)
         p.save()
         p.resetTransform()
         p.setOpacity(wide.alphaF())
@@ -361,6 +367,9 @@ class BoardView(QWidget):
     def _cancel_refine(self) -> None:
         self._idle.stop()
         if self._refine is not None:
+            for ctx in self._bands:                       # a step may have been cut off in the middle of a job's bands
+                ctx["painter"].end()
+            self._bands.clear()
             self._refine["painter"].end()
             self._refine = None
 
