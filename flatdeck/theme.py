@@ -33,6 +33,9 @@ QToolTip {{ background: {CARD_HI}; color: {TEXT}; border: 1px solid {BORDER}; pa
 QFrame#card {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 10px; }}
 QFrame#card QLabel, QFrame#card QCheckBox, QFrame#card QSlider {{ background: transparent; }}
 QLabel#cardTitle {{ color: {MUTED}; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; }}
+QLabel:disabled {{ color: #4d5866; }}
+QCheckBox:disabled {{ color: #4d5866; }}
+QDoubleSpinBox:disabled, QSpinBox:disabled, QComboBox:disabled {{ color: #4d5866; background: #121820; }}
 QLabel#muted {{ color: {MUTED}; }}
 QLabel#mono {{ font-family: {MONO}; }}
 QPushButton, QToolButton {{

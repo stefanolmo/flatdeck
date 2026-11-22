@@ -369,3 +369,27 @@ def test_tool_band_has_the_tool_width_on_scaled_displays(app, dpr):
     x = int((v._margin() + 200) * dpr)
     rows = [y for y in range(img.height()) if QColor(img.pixelColor(x, y)).green() > 40]
     assert abs((rows[-1] - rows[0] + 1) / dpr - 40) <= 1.5          # 2 mm at 20 px/mm
+
+
+def test_unused_settings_are_disabled(win):
+    w = win
+    i = w.iso_tool.findData("flat")
+    w.iso_tool.setCurrentIndex(i)
+    assert w.iso_dia.isEnabled() and not w.iso_tip.isEnabled() and not w.iso_angle.isEnabled()
+    w.iso_tool.setCurrentIndex(w.iso_tool.findData("vbit"))
+    assert not w.iso_dia.isEnabled() and w.iso_tip.isEnabled() and w.iso_angle.isEnabled()
+    labels = {id(wd): lab for lab, wd in w._labels}
+    assert not labels[id(w.iso_dia)].isEnabled() and labels[id(w.iso_tip)].isEnabled()
+    w.iso_passes.setValue(1)
+    assert not w.iso_overlap.isEnabled()
+    w.iso_passes.setValue(2)
+    assert w.iso_overlap.isEnabled()
+    w.iso_mode.setCurrentIndex(w.iso_mode.findData("ext"))
+    assert not w.iso_clear.isEnabled()
+    w.iso_mode.setCurrentIndex(w.iso_mode.findData("all"))
+    w.iso_rect.setChecked(True)
+    assert not w.iso_clear.isEnabled()
+    w.co_gaps.setCurrentIndex(w.co_gaps.findData("none"))
+    assert not w.co_gapw.isEnabled()
+    w.co_gaps.setCurrentIndex(w.co_gaps.findData("four"))
+    assert w.co_gapw.isEnabled()

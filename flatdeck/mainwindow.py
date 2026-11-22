@@ -204,6 +204,30 @@ class MainWindow(QMainWindow):
         split.addWidget(right)
         split.setStretchFactor(1, 1)
         split.setSizes([490, 910])
+        self._wire_dependencies()
+
+    # ----- settings that do not apply to the current choices are greyed out (the label too)
+    def _enable(self, widgets, on: bool) -> None:
+        for w in widgets:
+            w.setEnabled(on)
+        for lab, w in self._labels:
+            if w in widgets:
+                lab.setEnabled(on)
+
+    def _wire_dependencies(self) -> None:
+        for w in (self.iso_tool, self.iso_passes, self.iso_mode, self.iso_rect, self.iso_clear, self.co_gaps):
+            (w.toggled if isinstance(w, QCheckBox) else w.valueChanged if hasattr(w, "valueChanged") else w.currentIndexChanged
+             ).connect(lambda *_: self._update_enabled())
+        self._update_enabled()
+
+    def _update_enabled(self) -> None:
+        vbit = self.iso_tool.currentData() == "vbit"
+        self._enable([self.iso_dia], not vbit)
+        self._enable([self.iso_tip, self.iso_angle], vbit)
+        self._enable([self.iso_overlap], self.iso_passes.value() > 1)
+        # the rectangle option already clears the enclosed islands, and 'Outside only' leaves no inside grooves to clear them
+        self.iso_clear.setEnabled(self.iso_mode.currentData() != "ext" and not self.iso_rect.isChecked())
+        self._enable([self.co_gapw], self.co_gaps.currentData() != "none")
 
     # ----- parameter helpers (remembered between sessions)
     def _field(self, key: str, widget, default=None):
@@ -308,9 +332,6 @@ class MainWindow(QMainWindow):
 
     def _iso_tool_changed(self) -> None:
         vbit = self.iso_tool.currentData() == "vbit"
-        self.iso_dia.setEnabled(not vbit)
-        self.iso_tip.setEnabled(vbit)
-        self.iso_angle.setEnabled(vbit)
         eff = cam.vbit_diameter(self.iso_tip.value(), self.iso_angle.value(), self.iso_depth.value()) if vbit else self.iso_dia.value()
         note = " (at the given depth)" if vbit else ""
         if self.iso_measured.value() > 0:
@@ -912,6 +933,7 @@ class MainWindow(QMainWindow):
                         "Load the outline file to fix it to the board corner.")
             self.info.setText(f"Board: {bb[2] - bb[0]:.2f} × {bb[3] - bb[1]:.2f} mm · holes: {holes}\n"
                               f"Origin in the file: X {ox:.3f}  Y {oy:.3f}{note}")
+        self._enable([self.co_margin], not self.project.has_outline())
         try:
             outer, inner, note = self.project.board_outline(self.co_margin.value())
             self.co_note.setText(note or f"Outline from layer: {1 + len(inner)} profiles ({len(inner)} inner)")
