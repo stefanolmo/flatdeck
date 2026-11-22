@@ -250,7 +250,7 @@ class BoardView(QWidget):
         self._bands.append(ctx)
 
     def _band_chunk(self, ctx: dict, path, col: QColor, width: float) -> None:
-        pen = QPen(QColor(col.red(), col.green(), col.blue(), 255), max(width * self.scale, 1.0), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        pen = QPen(QColor(col.red(), col.green(), col.blue(), 255), max(width * self.scale * self.devicePixelRatioF(), 1.0), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
         pen.setCosmetic(True)
         ctx["painter"].setPen(pen)
         ctx["painter"].setBrush(Qt.NoBrush)

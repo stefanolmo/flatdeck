@@ -342,3 +342,30 @@ def test_view_zoom_during_refine_does_not_leave_painters_open(win):
     v._begin_interaction()                        # a zoom/drag arrives while the good picture is being drawn
     assert v._refine is None and not v._bands
     v._end_interaction()
+
+
+@pytest.mark.parametrize("dpr", [1.0, 1.25, 2.0])
+def test_tool_band_has_the_tool_width_on_scaled_displays(app, dpr):
+    import numpy as np
+    from PySide6.QtGui import QColor
+    from flatdeck import cam
+    from flatdeck.model import Project
+    from flatdeck.viewer import BoardView
+
+    class V(BoardView):
+        def devicePixelRatioF(self):
+            return dpr
+
+    pr = Project()
+    r = cam.CamResult(kind="isolation", origin=(0, 0), name="x", tool_dia=2.0)
+    r.paths = [(np.array([[-5.0, 0], [5, 0]]), False)]
+    pr.add_job(r)
+    v = V()
+    v.resize(400, 300)
+    v.project = pr
+    v.scale, v.centre = 20.0, np.array([0.0, 0.0])
+    v._render_scene(v._signature(), v._view_state())
+    img = v._scene["pm"].toImage()
+    x = int((v._margin() + 200) * dpr)
+    rows = [y for y in range(img.height()) if QColor(img.pixelColor(x, y)).green() > 40]
+    assert abs((rows[-1] - rows[0] + 1) / dpr - 40) <= 1.5          # 2 mm at 20 px/mm
