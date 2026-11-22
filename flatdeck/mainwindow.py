@@ -5,9 +5,9 @@ import os
 
 import numpy as np
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, QSize, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QToolButton, QGridLayout, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
                                QPushButton, QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget,
                                QToolBar, QVBoxLayout, QWidget, QHeaderView)
@@ -33,6 +33,15 @@ def make_folder_dialog(parent, title: str, start: str, save: bool) -> QFileDialo
     dlg.setOption(QFileDialog.DontUseNativeDialog, True)
     dlg.setAcceptMode(QFileDialog.AcceptSave if save else QFileDialog.AcceptOpen)
     dlg.setLabelText(QFileDialog.Accept, "Save" if save else "Open")
+    # the dialog's small buttons get their icons from the desktop icon theme, which is often missing: draw them ourselves
+    for name, ic in (("backButton", "back"), ("forwardButton", "forward"), ("toParentButton", "up"),
+                     ("newFolderButton", "newfolder"), ("listModeButton", "list"), ("detailModeButton", "detail")):
+        b = dlg.findChild(QToolButton, name)
+        if b is not None:
+            b.setIcon(theme.icon(ic))
+            b.setIconSize(QSize(18, 18))
+            b.setFixedSize(34, 30)
+            b.setStyleSheet("QToolButton { padding: 0; }")
     return dlg
 
 

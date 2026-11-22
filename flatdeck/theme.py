@@ -153,7 +153,17 @@ def _pack_save(p, c): _poly(p, [(4, 9), (12, 5), (20, 9), (20, 18), (12, 21), (4
 def _pack_open(p, c): _poly(p, [(4, 10), (12, 6), (20, 10), (20, 19), (12, 22), (4, 19)], True); _poly(p, [(12, 2), (12, 11)]); _poly(p, [(8, 6), (12, 2), (16, 6)])
 
 
-_NAMES = "open save fit mirror_x mirror_y rotate play trash drill target pack_save pack_open".split()
+def _back(p, c): _poly(p, [(19, 12), (5, 12)]); _poly(p, [(11, 6), (5, 12), (11, 18)])
+def _forward(p, c): _poly(p, [(5, 12), (19, 12)]); _poly(p, [(13, 6), (19, 12), (13, 18)])
+def _up(p, c): _poly(p, [(12, 19), (12, 5)]); _poly(p, [(6, 11), (12, 5), (18, 11)])
+def _newfolder(p, c): _poly(p, [(3, 6), (3, 19), (21, 19), (21, 9), (11, 9), (9, 6)], True); _poly(p, [(12, 12), (12, 17)]); _poly(p, [(9.5, 14.5), (14.5, 14.5)])
+def _list(p, c):
+    for y in (6, 12, 18): _poly(p, [(4, y), (4.5, y)]); _poly(p, [(9, y), (20, y)])
+def _detail(p, c):
+    for y in (6, 12, 18): _poly(p, [(4, y), (20, y)])
+
+
+_NAMES = "open save fit mirror_x mirror_y rotate play trash drill target pack_save pack_open back forward up newfolder list detail".split()
 _FUNCS = {n: globals()["_" + n] for n in _NAMES}
 
 
