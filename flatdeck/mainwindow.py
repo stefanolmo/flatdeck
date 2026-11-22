@@ -13,11 +13,14 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, 
                                QToolBar, QVBoxLayout, QWidget, QHeaderView)
 
 from . import __version__, cam, theme
+from . import projectfile
 from .model import Layer, Project
+from .projectfile import ProjectError
 from .viewer import BoardView
 from .widgets import AngleBox, Card, CodeView, dspin, ispin
 
 APP_NAME = "FlatDeck"
+UI_CHECKS = ("iso_mirror", "iso_clear", "iso_rect", "iso_skip_hv", "dr_mirror", "hv_mirror", "slot_mirror", "fr_mirror")
 KIND_LABEL = {"copper": "Copper", "outline": "Outline", "silk": "Silkscreen", "mask": "Mask", "drill": "Drill", "job": "G-code"}
 
 
@@ -34,6 +37,8 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.qs = QSettings("flatdeck", "flatdeck")
         self.project = Project()
+        self.project_dir: str | None = None              # the folder of the saved / opened project
+        self._loading = False                            # True while a project sets the widgets: do not overwrite the user's defaults
         self._fields: dict = {}
         self._form_rows: list = []
         self._labels: list = []
@@ -62,6 +67,11 @@ class MainWindow(QMainWindow):
         self.addToolBar(tb)
         self._act(tb, "Open…", "open", self.open_files, "Open Gerber / Excellon files (several at once)")
         self.save_act = self._act(tb, "Save G-code…", "save", self.save_gcode, "Save the G-code of the selected job")
+        tb.addSeparator()
+        self._act(tb, "Open project…", "pack_open", self.open_project_dialog, "Open a project folder saved by FlatDeck (files, marks, slots and settings)")
+        self._act(tb, "Save project…", "pack_save", self.save_project_dialog,
+                  "Save the work in progress: you choose a folder, which gets a copy of the loaded files plus the layer settings, high-voltage marks, "
+                  "slots and parameters. Generated G-code is not saved: it is made again from the project.")
         tb.addSeparator()
         self._act(tb, "Mirror X", "mirror_x", lambda: self.transform("mirror_x"), "Mirror the whole project about a vertical axis")
         self._act(tb, "Mirror Y", "mirror_y", lambda: self.transform("mirror_y"), "Mirror the whole project about a horizontal axis")
@@ -177,7 +187,8 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             pass
         sig = widget.valueChanged if hasattr(widget, "valueChanged") else widget.currentIndexChanged
-        sig.connect(lambda *_: self.qs.setValue("p/" + key, widget.value() if hasattr(widget, "value") else widget.currentData()))
+        sig.connect(lambda *_: None if self._loading else
+                    self.qs.setValue("p/" + key, widget.value() if hasattr(widget, "value") else widget.currentData()))
         return widget
 
     def _form(self, card: Card, rows: list) -> QGridLayout:
@@ -911,6 +922,11 @@ class MainWindow(QMainWindow):
 
     def _fill_drill_tools(self) -> None:
         lay = self.dr_file.currentData()
+        prev = {}                                          # keep the user's choice of bits when the list is rebuilt for the same file
+        if getattr(self, "_drill_owner", None) is lay and lay is not None:
+            prev = {self.dr_table.item(r, 0).data(Qt.UserRole): self.dr_table.item(r, 0).checkState()
+                    for r in range(self.dr_table.rowCount())}
+        self._drill_owner = lay
         self.dr_table.setRowCount(0)
         if lay is None:
             return
@@ -919,7 +935,7 @@ class MainWindow(QMainWindow):
             self.dr_table.insertRow(r)
             chk = QTableWidgetItem()
             chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            chk.setCheckState(Qt.Checked)
+            chk.setCheckState(prev.get(t.number, Qt.Checked))
             chk.setData(Qt.UserRole, t.number)
             self.dr_table.setItem(r, 0, chk)
             self.dr_table.setItem(r, 1, QTableWidgetItem(f"T{t.number}"))
@@ -1031,6 +1047,114 @@ class MainWindow(QMainWindow):
         name = self._next_name(f"Frame {lay.name}" + (" (mirrored)" if p.mirror_x is not None else ""))
         copper = lay.gerber.polys
         self._run("frame", lambda: cam.frame(copper, iso, *self.project.board_outline()[:2], p, self.project.origin(), name))
+
+    # ------------------------------------------------------------------ project files
+    def _set_title(self) -> None:
+        name = os.path.basename(os.path.normpath(self.project_dir)) if self.project_dir else ""
+        self.setWindowTitle(f"{APP_NAME} {__version__}" + (f"  —  {name}" if name else ""))
+
+    def _ui_state(self) -> dict:
+        fields = {}
+        for k, wd in self._fields.items():
+            v = wd.value() if hasattr(wd, "value") else wd.currentData()
+            if isinstance(v, (int, float, str, bool)):
+                fields[k] = v
+        tools = {str(self.dr_table.item(r, 0).data(Qt.UserRole)): self.dr_table.item(r, 0).checkState() == Qt.Checked
+                 for r in range(self.dr_table.rowCount())}
+        return {"fields": fields, "checks": {n: getattr(self, n).isChecked() for n in UI_CHECKS}, "drill_tools": tools}
+
+    def _apply_ui_state(self, ui: dict) -> None:
+        self._loading = True
+        try:
+            for k, v in (ui.get("fields") or {}).items():
+                wd = self._fields.get(k)
+                try:
+                    if wd is None:
+                        continue
+                    if hasattr(wd, "setValue"):
+                        wd.setValue(type(wd.value())(float(v)))
+                    elif isinstance(wd, QComboBox):
+                        i = wd.findData(v)
+                        if i >= 0:
+                            wd.setCurrentIndex(i)
+                except (TypeError, ValueError):
+                    pass
+            for n, on in (ui.get("checks") or {}).items():
+                if n in UI_CHECKS:
+                    getattr(self, n).setChecked(bool(on))
+        finally:
+            self._loading = False
+
+    def save_project_dialog(self) -> None:
+        if not self.project.data_layers():
+            QMessageBox.information(self, APP_NAME, "There is nothing to save: load some files first.")
+            return
+        start = self.project_dir or self.qs.value("project_dir", os.path.expanduser("~"))
+        folder = QFileDialog.getExistingDirectory(self, "Choose the folder where to save the project", start)
+        if folder:
+            self.save_project_to(folder)
+
+    def save_project_to(self, folder: str) -> bool:
+        same = self.project_dir is not None and os.path.realpath(folder) == os.path.realpath(self.project_dir)
+        if not same:
+            if projectfile.is_project(folder):
+                if QMessageBox.question(self, APP_NAME, "This folder already contains a FlatDeck project. Overwrite it?") != QMessageBox.Yes:
+                    return False
+            elif os.path.isdir(folder) and os.listdir(folder):
+                if QMessageBox.question(self, APP_NAME, "The folder is not empty. The project is added to it (a project file and a "
+                                                        "'files' folder); nothing already there is deleted. Continue?") != QMessageBox.Yes:
+                    return False
+        try:
+            path = projectfile.save_project(self.project, folder, self._ui_state())
+        except ProjectError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return False
+        self.project_dir = folder
+        self.qs.setValue("project_dir", folder)
+        self._set_title()
+        n = len(self.project.data_layers())
+        self._log(f"Project saved in {folder}: {n} file(s) copied, {len(self.project.slots)} slot(s)")
+        self.statusBar().showMessage(f"Project saved in {folder}", 6000)
+        return True
+
+    def open_project_dialog(self) -> None:
+        start = self.project_dir or self.qs.value("project_dir", os.path.expanduser("~"))
+        folder = QFileDialog.getExistingDirectory(self, "Choose the project folder to open", start)
+        if not folder:
+            return
+        if (self.project.layers or self.project.slots) and QMessageBox.question(
+                self, APP_NAME, "Replace the current project? What you have not saved is lost.") != QMessageBox.Yes:
+            return
+        self.open_project_from(folder)
+
+    def open_project_from(self, folder: str) -> bool:
+        try:
+            project, ui, warnings = projectfile.load_project(folder)
+        except ProjectError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return False
+        self.project = project
+        self.project_dir = folder
+        self.qs.setValue("project_dir", folder)
+        self.view.set_project(project)
+        self.view.draft = []
+        self.origin_combo.blockSignals(True)
+        self.origin_combo.setCurrentIndex(max(self.origin_combo.findData(project.origin_mode), 0))
+        self.origin_combo.blockSignals(False)
+        self._apply_ui_state(ui)
+        self._refresh()
+        tools = ui.get("drill_tools") or {}
+        for r in range(self.dr_table.rowCount()):
+            it = self.dr_table.item(r, 0)
+            if str(it.data(Qt.UserRole)) in tools:
+                it.setCheckState(Qt.Checked if tools[str(it.data(Qt.UserRole))] else Qt.Unchecked)
+        self.view.fit()
+        self._set_title()
+        self._log(f"Project opened from {folder}: {len(project.data_layers())} file(s), {len(project.slots)} slot(s)")
+        for msg in warnings:
+            self._log(f"  ⚠ {msg}")
+        self.statusBar().showMessage("Project opened. Generated G-code is not saved: generate the jobs again.", 8000)
+        return True
 
     def save_gcode(self) -> None:
         lay = self._current()

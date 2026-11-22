@@ -140,6 +140,23 @@ A slot cut through the board lengthens the creepage path between the two zones. 
 Which offset, width and distance are enough for your voltage is for you and the applicable standard to decide: FlatDeck cuts what you
 set and checks only the geometry.
 
+## Saving and opening a project
+
+**Save project…** (toolbar) asks for a folder and writes the work in progress into it:
+
+```
+<your folder>/
+  flatdeck-project.json     layers (type, side, visibility), origin choice, high-voltage marks, slots, transforms, all the parameters
+  files/                    a COPY of every Gerber / Excellon file that was loaded
+```
+
+The project is therefore self-contained: it keeps working if the original files are moved or deleted, and from then on FlatDeck uses
+its own copies. **Open project…** reads such a folder back (after asking before it replaces the current work) and restores the layers,
+the marks, the slots and every setting of the tabs, including the bits you ticked in *Drilling*; the settings of the project do not
+overwrite your own defaults. Saving again to the same folder just updates it; another folder that already holds a project, or is not
+empty, asks first. **Generated G-code is not part of the project**: it is made again with *Generate*, from the same settings. A
+project folder is treated as untrusted data: it can only name files inside itself.
+
 ## Limits of v1 (what is NOT there compared with FlatCAM)
 
 - No copper clearing (NCC), no paint, no double-sided alignment holes, no auto-levelling, no sending to the machine.

@@ -29,6 +29,7 @@ class Layer:
     side: str = "top"               # top | bottom (from the file extension or name)
     regen: object = None            # job only: callable that generates it again with the current origin
     hv_points: list = field(default_factory=list)       # one point inside every island marked high-voltage
+    ops: list = field(default_factory=list)             # (op, cx, cy) board transforms applied to this layer, replayed when a project is reopened
     _cache: dict = field(default_factory=dict, repr=False)
 
     def bounds(self):
@@ -230,27 +231,44 @@ class Project:
         b = self.board_bounds()
         return ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) if b else (0.0, 0.0)
 
-    def transform(self, op: str) -> None:
-        cx, cy = self._centre()
-        fns = {
+    OPS = ("mirror_x", "mirror_y", "rot90", "rot270")
+
+    @staticmethod
+    def _fn(op: str, cx: float, cy: float):
+        return {
             "mirror_x": lambda a: np.column_stack([2 * cx - a[:, 0], a[:, 1]]),
             "mirror_y": lambda a: np.column_stack([a[:, 0], 2 * cy - a[:, 1]]),
             "rot90": lambda a: np.column_stack([cx - (a[:, 1] - cy), cy + (a[:, 0] - cx)]),
             "rot270": lambda a: np.column_stack([cx + (a[:, 1] - cy), cy - (a[:, 0] - cx)]),
-        }
-        fn = fns[op]
-        flips = op.startswith("mirror")
+        }[op]
+
+    @staticmethod
+    def _transform_layer(l: Layer, fn, flips: bool, with_marks: bool = True) -> None:
+        if l.gerber is not None:
+            g = l.gerber
+            g.polys = geom.union([fn(p) for p in g.polys]) if flips else [fn(p) for p in g.polys]
+            g.strokes = [(w, fn(s)) for w, s in g.strokes]
+            if l.hv_points and with_marks:
+                l.hv_points = [tuple(q) for q in fn(np.array(l.hv_points, dtype=float))]
+        if l.drill is not None:
+            for t in l.drill.tools.values():
+                t.holes = fn(t.holes) if len(t.holes) else t.holes
+                t.slots = [fn(s) for s in t.slots]
+
+    def transform(self, op: str) -> None:
+        cx, cy = self._centre()
+        fn = self._fn(op, cx, cy)
         for l in self.data_layers():
-            if l.gerber is not None:
-                g = l.gerber
-                g.polys = geom.union([fn(p) for p in g.polys]) if flips else [fn(p) for p in g.polys]
-                g.strokes = [(w, fn(s)) for w, s in g.strokes]
-                if l.hv_points:
-                    l.hv_points = [tuple(q) for q in fn(np.array(l.hv_points, dtype=float))]
-            if l.drill is not None:
-                for t in l.drill.tools.values():
-                    t.holes = fn(t.holes) if len(t.holes) else t.holes
-                    t.slots = [fn(s) for s in t.slots]
+            self._transform_layer(l, fn, op.startswith("mirror"))
+            l.ops.append((op, float(cx), float(cy)))
         for s in self.slots:
             s.pts = fn(s.pts)
         self.layers = [l for l in self.layers if l.kind != "job"]   # generated G-code is now out of date
+
+    def replay(self, layer: Layer, ops) -> None:
+        """Apply again, to a freshly loaded layer, the transforms it had when a project was saved (with the same centres)."""
+        for op, cx, cy in ops:
+            if op not in self.OPS:
+                raise ValueError(f"Unknown transform '{op}'")
+            self._transform_layer(layer, self._fn(op, float(cx), float(cy)), op.startswith("mirror"), with_marks=False)
+            layer.ops.append((op, float(cx), float(cy)))

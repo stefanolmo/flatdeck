@@ -149,7 +149,11 @@ def _drill(p, c): p.drawEllipse(QPointF(12, 12), 7, 7); p.drawEllipse(QPointF(12
 def _target(p, c): p.drawEllipse(QPointF(12, 12), 6, 6); _poly(p, [(12, 2), (12, 7)]); _poly(p, [(12, 17), (12, 22)]); _poly(p, [(2, 12), (7, 12)]); _poly(p, [(17, 12), (22, 12)])
 
 
-_NAMES = "open save fit mirror_x mirror_y rotate play trash drill target".split()
+def _pack_save(p, c): _poly(p, [(4, 9), (12, 5), (20, 9), (20, 18), (12, 21), (4, 18)], True); _poly(p, [(4, 9), (12, 13), (20, 9)]); _poly(p, [(12, 13), (12, 21)])
+def _pack_open(p, c): _poly(p, [(4, 10), (12, 6), (20, 10), (20, 19), (12, 22), (4, 19)], True); _poly(p, [(12, 2), (12, 11)]); _poly(p, [(8, 6), (12, 2), (16, 6)])
+
+
+_NAMES = "open save fit mirror_x mirror_y rotate play trash drill target pack_save pack_open".split()
 _FUNCS = {n: globals()["_" + n] for n in _NAMES}
 
 
