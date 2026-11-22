@@ -178,6 +178,31 @@ def path_length(p, closed: bool = False) -> float:
     return d
 
 
+def simplify(a, tol: float) -> np.ndarray:
+    """Douglas-Peucker: the polyline without the points that stay within `tol` of the line through their neighbours (ends are kept)."""
+    a = np.asarray(a, dtype=float)
+    n = len(a)
+    if n < 3 or tol <= 0:
+        return a
+    keep = np.zeros(n, bool)
+    keep[0] = keep[-1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        p, d = a[i], a[j] - a[i]
+        ln = float(np.hypot(*d))
+        seg = a[i + 1:j]
+        dist = np.hypot(*(seg - p).T) if ln < 1e-12 else np.abs(d[0] * (seg[:, 1] - p[1]) - d[1] * (seg[:, 0] - p[0])) / ln
+        k = int(np.argmax(dist))
+        if dist[k] > tol:
+            m = i + 1 + k
+            keep[m] = True
+            stack += [(i, m), (m, j)]
+    return a[keep]
+
+
 def order_nearest(items: list, start=(0.0, 0.0), closed: bool = True) -> list:
     """Order polylines by nearest-neighbour travel. Closed loops are rotated to start at the nearest vertex;
     open polylines may be reversed. Returns new arrays."""

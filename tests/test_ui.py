@@ -298,3 +298,31 @@ def test_rectangle_option_generates_a_job(win):
     win.gen_isolation()
     job = win.project.jobs()[-1].job
     assert len(job.paths) > len(plain.paths) and "Rectangle" in win.messages.toPlainText()
+
+
+def test_view_pan_reuses_picture_and_refines(win):
+    load_all(win)
+    win.gen_isolation()
+    v = win.view
+    v.resize(800, 600)
+    v.fit()
+    v.grab()
+    n = v.renders
+    v.grab()
+    assert v.renders == n                         # nothing changed: no redraw
+    v._interacting = True
+    v.centre = v.centre + [1.0, 1.0]
+    v.scale *= 1.1
+    v.grab()
+    assert v.renders == n                         # dragging/zooming moves the existing picture
+    v._interacting = False
+    v.grab()
+    assert v.renders == n + 1                     # settled: drawn again for the new view
+    v._scene["aa"] = False
+    v._start_refine()
+    while v._refine is not None:
+        QApplication.processEvents()
+    assert v._scene["aa"] and v.renders == n + 2
+    win.project.layers[-1].visible = False        # content change -> redraw
+    v.grab()
+    assert v.renders >= n + 3
